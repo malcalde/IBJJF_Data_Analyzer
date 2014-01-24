@@ -8,6 +8,7 @@ Created on 22/01/2014
 
 import sys
 import re
+import csv
 
 from pdfminer.pdfparser import PDFParser
 from pdfminer.pdfdocument import PDFDocument, PDFNoOutlines
@@ -28,7 +29,7 @@ def parseLTObjects(LTObjects, pageNo, lines=[]):
     for LTObject in LTObjects:
         if isinstance(LTObject, LTTextBox) or isinstance(LTObject, LTTextLine):
             for line in LTObject.get_text().split('\n'):
-                lines.append(line.upper().strip())
+                lines.append(line.encode('ascii', 'ignore').upper().strip())
         elif isinstance(LTObject, LTFigure):
             parseLTObjects(LTObject.objs, pageNo, lines)
         else:
@@ -48,7 +49,7 @@ def extractByAcademy():
     
     if not document.is_extractable: raise Exception()#PDFTextExtractionNotAllowed()
     
-    record = 1	 
+    pageno = 0	 
     rsrcmgr = PDFResourceManager()
     
     laparams = LAParams()
@@ -59,7 +60,10 @@ def extractByAcademy():
     for page in pages:
         interpreter.process_page(page)
         layout = device.get_result() 
-        lines = parseLTObjects(layout,1)
+        lines = parseLTObjects(layout,pageno)
+
+        pageno += 1
+        print "Processing page %i\n"%(pageno)
         
         for line in lines:
             if line.count('/') == 3:
@@ -72,6 +76,7 @@ def extractByAcademy():
                     hkey += data[i] + '_' 
                                
                 hkey = hkey.replace(' ', '_')
+                hkey = hkey[:len(hkey)-1]
                 
                 if False == knowledge.has_key(club): knowledge[club] = dict()
 
@@ -80,26 +85,75 @@ def extractByAcademy():
                 else:
                     knowledge[club][hkey] = data
                     knowledge[club][hkey].append(1)
-
-		if knowledge[club][hkey][4] > record:
-		    print "New record on %s at category %s with %i players\n"%(club,hkey,knowledge[club][hkey][4])
-		    record = knowledge[club][hkey][4]
-		print "{%s-%s}Processing line %s\n"%(club,hkey,line)
+                    
+                print "{%s-%s}Processing line %s - %i\n"%(club,hkey,line, knowledge[club][hkey][4])
+            elif line.startswith('TOTAL'):
+                club = None
             else:
-                tmp = line
-                if line <> '': club = None
+                tmp = line.strip()
+                
+        del lines[:]
             
 def extractByCategory():
-    pass
+    
+    data = None
+    hkey = None
+    
+    fp = open('../RegistrationsByCategoryAndAcademy.pdf', 'rb')
+    parser = PDFParser(fp)
+    document = PDFDocument(parser)
+    document.initialize(None)
+    
+    if not document.is_extractable: raise Exception()#PDFTextExtractionNotAllowed()
+    
+    pageno = 0	 
+    rsrcmgr = PDFResourceManager()
+    
+    laparams = LAParams()
+    device = PDFPageAggregator(rsrcmgr, laparams=laparams)
+    interpreter = PDFPageInterpreter(rsrcmgr, device)
+    
+    pages = PDFPage.create_pages(document)
+    for page in pages:
+        interpreter.process_page(page)
+        layout = device.get_result() 
+        lines = parseLTObjects(layout,pageno)
 
-def dumpKnowledge():
-    for c in knowledge.keys():
-        for h in knowledge[c].keys():
-            line = c + ',' + knowledge[c][h][0] + ',' + knowledge[c][h][1] +',' + knowledge[c][h][2] +',' + knowledge[c][h][3] + ',' + str(knowledge[c][h][4])
-            print line,",0,0,0\n" 
+        pageno += 1
+        print "Processing page %i\n"%(pageno)
         
-if __name__ == '__main__':
-    extractByAcademy()
+        for line in lines:
+            if line.count('/') == 3:
+                data = line.split('/')
 
-    dumpKnowledge()
+                hkey = ''
+                for i in range(0,len(data)):
+                    data[i] = data[i].strip()
+                    hkey += data[i] + '_' 
+                               
+                hkey = hkey.replace(' ', '_')
+                hkey = hkey[:len(hkey)-1]
+                
+            elif line.startswith('TOTAL'):
+                hkey = None
+                print "Limpieza"
+            else:
+                line = line.strip()
+                if hkey is not None:
+                    if True == knowledge.has_key(line): print "TODO contabilizar competidor"
+                    print "Competidor en club {%s} para categoria %s\n"%(line, hkey)
+                    
+        del lines[:]
+        
+def dumpKnowledge():
+    with open('../data/academies.csv', 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
+        for c in knowledge.keys():
+            for h in knowledge[c].keys():
+                writer.writerow([c,knowledge[c][h][0],knowledge[c][h][1],knowledge[c][h][2],knowledge[c][h][3],knowledge[c][h][4]])
+            
+if __name__ == '__main__':
+    #extractByAcademy()
+    extractByCategory()
+    #dumpKnowledge()
     

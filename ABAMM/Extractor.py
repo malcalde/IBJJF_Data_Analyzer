@@ -24,6 +24,13 @@ from pdfminer.layout import LAParams, LTTextBox, LTTextLine, LTFigure, LTImage
 
 knowledge = dict()
 
+belt = dict()
+gender = dict()
+category = dict()
+weight = dict()
+
+total = 0
+
 def parseLTObjects(LTObjects, pageNo, lines=[]):
     
     for LTObject in LTObjects:
@@ -36,6 +43,37 @@ def parseLTObjects(LTObjects, pageNo, lines=[]):
             print "LT Type %s\n"%(LTObject)    
     return lines
 
+def processData(data, count=False):
+    global total
+
+    hkey = ''
+
+    #poner assert a la longitud
+    for i in range(0,len(data)):
+        data[i] = data[i].strip()
+        hkey += data[i] + '_' 
+                               
+        hkey = hkey.replace(' ', '_')
+        hkey = hkey[:len(hkey)-1]
+    
+    #annotate results (if proceed)
+    if count:
+        if False == belt.has_key(data[0]): belt[data[0]] = 1
+        belt[data[0]] += 1
+
+        if False == category.has_key(data[1]): category[data[1]] = 1
+        category[data[1]] += 1
+
+        if False == gender.has_key(data[2]): gender[data[2]] = 1
+        gender[data[2]] += 1
+
+        if False == weight.has_key(data[3]): weight[data[3]] = 1
+        weight[data[3]] += 1
+	
+	total += 1
+    
+    return hkey
+        
 def extractByAcademy():
 
     tmp = None
@@ -70,14 +108,8 @@ def extractByAcademy():
                 if club is None: club = tmp 
                 data = line.split('/')
 
-                hkey = ''
-                for i in range(0,len(data)):
-                    data[i] = data[i].strip()
-                    hkey += data[i] + '_' 
-                               
-                hkey = hkey.replace(' ', '_')
-                hkey = hkey[:len(hkey)-1]
-                
+                hkey = processData(data, True)
+            
                 if False == knowledge.has_key(club): knowledge[club] = dict()
 
                 if knowledge[club].has_key(hkey):
@@ -151,9 +183,39 @@ def dumpKnowledge():
         for c in knowledge.keys():
             for h in knowledge[c].keys():
                 writer.writerow([c,knowledge[c][h][0],knowledge[c][h][1],knowledge[c][h][2],knowledge[c][h][3],knowledge[c][h][4]])
-            
+
+def dumpBelts():
+    with open('../data/belts.csv', 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
+        for c in belt.keys():
+            writer.writerow([c,belt[c], 1.0 * belt[c]/total])
+
+def dumpCategories():
+    with open('../data/categories.csv', 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
+        for c in category.keys():
+            writer.writerow([c,category[c], 1.0 * category[c]/total])
+
+def dumpGenders():
+    with open('../data/genders.csv', 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
+        for c in gender.keys():
+            writer.writerow([c,gender[c], 1.0 * gender[c]/total])
+
+def dumpWeights():
+    with open('../data/weights.csv', 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
+        for c in weight.keys():
+            writer.writerow([c,weight[c], 1.0 * weight[c]/total])
+                            
 if __name__ == '__main__':
-    #extractByAcademy()
-    extractByCategory()
+    extractByAcademy()
+    #extractByCategory()
+                            
     #dumpKnowledge()
+    dumpBelts()
+    dumpCategories()
+    dumpGenders()
+    dumpWeights()                        
+                            
     

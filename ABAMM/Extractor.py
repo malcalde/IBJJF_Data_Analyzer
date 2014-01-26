@@ -24,6 +24,7 @@ from pdfminer.layout import LAParams, LTTextBox, LTTextLine, LTFigure, LTImage
 
 knowledge = dict()
 
+academy = dict()
 belt = dict()
 gender = dict()
 category = dict()
@@ -46,12 +47,12 @@ def parseLTObjects(LTObjects, pageNo, lines=[]):
 def processData(data, count=False):
     global total
 
-    hkey = ''
+    hkey = ""
 
     #poner assert a la longitud
     for i in range(0,len(data)):
         data[i] = data[i].strip()
-        hkey += data[i] + '_' 
+        hkey += data[i] + "_" 
                                
         hkey = hkey.replace(' ', '_')
         hkey = hkey[:len(hkey)-1]
@@ -101,7 +102,7 @@ def extractByAcademy():
         lines = parseLTObjects(layout,pageno)
 
         pageno += 1
-        print "Processing page %i\n"%(pageno)
+        #print "Processing page %i\n"%(pageno)
         
         for line in lines:
             if line.count('/') == 3:
@@ -118,9 +119,10 @@ def extractByAcademy():
                     knowledge[club][hkey] = data
                     knowledge[club][hkey].append(1)
                     
-                print "{%s-%s}Processing line %s - %i\n"%(club,hkey,line, knowledge[club][hkey][4])
+                #print "{%s-%s}Processing line %s - %i\n"%(club,hkey,line, knowledge[club][hkey][4])
             elif line.startswith('TOTAL'):
-                club = None
+                academy[club] = int(line.replace('TOTAL:','').strip())
+		club = None
             else:
                 tmp = line.strip()
                 
@@ -176,9 +178,12 @@ def extractByCategory():
                     print "Competidor en club {%s} para categoria %s\n"%(line, hkey)
                     
         del lines[:]
-        
+       
+def extractFromResults():
+    pass
+ 
 def dumpKnowledge():
-    with open('../data/academies.csv', 'wb') as csvfile:
+    with open('../data/data.csv', 'wb') as csvfile:
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         for c in knowledge.keys():
             for h in knowledge[c].keys():
@@ -207,15 +212,22 @@ def dumpWeights():
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         for c in weight.keys():
             writer.writerow([c,weight[c], 1.0 * weight[c]/total])
+
+def dumpAcademy():
+    with open('../data/academies.csv', 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
+        for c in academy.keys():
+            writer.writerow([c,academy[c], 1.0 * academy[c]/total])
                             
 if __name__ == '__main__':
     extractByAcademy()
     #extractByCategory()
                             
-    #dumpKnowledge()
+    dumpKnowledge()
     dumpBelts()
     dumpCategories()
     dumpGenders()
+    dumpAcademy()	
     dumpWeights()                        
                             
     

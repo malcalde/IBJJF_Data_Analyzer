@@ -132,7 +132,7 @@ def extractByCategory():
     
     data = None
     hkey = None
-    
+     
     fp = open('../RegistrationsByCategoryAndAcademy.pdf', 'rb')
     parser = PDFParser(fp)
     document = PDFDocument(parser)

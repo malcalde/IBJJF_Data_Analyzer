@@ -30,6 +30,7 @@ category = dict()
 weight = dict()
 
 total = 0
+hkey = ''
 
 def parseLTObjects(LTObjects, pageNo, lines=[]):
     
@@ -44,17 +45,18 @@ def parseLTObjects(LTObjects, pageNo, lines=[]):
     return lines
 
 def processData(data, count=False):
-    global total
+    global total, hkey
 
+    assert len(data) == 4, "Error en formato de line X/Y/W/Z"
+    
     hkey = ''
-
-    #poner assert a la longitud
+    
     for i in range(0,len(data)):
         data[i] = data[i].strip()
         hkey += data[i] + '_' 
                                
-        hkey = hkey.replace(' ', '_')
-        hkey = hkey[:len(hkey)-1]
+    hkey = hkey.replace(' ', '_')
+    hkey = hkey[:len(hkey)-1]
     
     #annotate results (if proceed)
     if count:
@@ -69,16 +71,13 @@ def processData(data, count=False):
 
         if False == weight.has_key(data[3]): weight[data[3]] = 1
         weight[data[3]] += 1
-	
-	total += 1
-    
-    return hkey
+
+    total += 1
         
 def extractByAcademy():
 
     tmp = None
     club = None
-    item = None
     
     fp = open('../RegistrationsByAcademy.pdf', 'rb')
     parser = PDFParser(fp)
@@ -108,7 +107,7 @@ def extractByAcademy():
                 if club is None: club = tmp 
                 data = line.split('/')
 
-                hkey = processData(data, True)
+                processData(data, True)
             
                 if False == knowledge.has_key(club): knowledge[club] = dict()
 
@@ -118,7 +117,7 @@ def extractByAcademy():
                     knowledge[club][hkey] = data
                     knowledge[club][hkey].append(1)
                     
-                print "{%s-%s}Processing line %s - %i\n"%(club,hkey,line, knowledge[club][hkey][4])
+                #print "{%s-%s}Processing line %s - %i\n"%(club,hkey,line, knowledge[club][hkey][4])
             elif line.startswith('TOTAL'):
                 club = None
             else:
@@ -129,7 +128,6 @@ def extractByAcademy():
 def extractByCategory():
     
     data = None
-    hkey = None
     
     fp = open('../RegistrationsByCategoryAndAcademy.pdf', 'rb')
     parser = PDFParser(fp)
@@ -155,25 +153,20 @@ def extractByCategory():
         print "Processing page %i\n"%(pageno)
         
         for line in lines:
+            
             if line.count('/') == 3:
                 data = line.split('/')
 
-                hkey = ''
-                for i in range(0,len(data)):
-                    data[i] = data[i].strip()
-                    hkey += data[i] + '_' 
-                               
-                hkey = hkey.replace(' ', '_')
-                hkey = hkey[:len(hkey)-1]
+                processData(data, True)
                 
             elif line.startswith('TOTAL'):
-                hkey = None
-                print "Limpieza"
+                print int(line.replace('TOTAL:','').strip())
             else:
                 line = line.strip()
-                if hkey is not None:
-                    if True == knowledge.has_key(line): print "TODO contabilizar competidor"
-                    print "Competidor en club {%s} para categoria %s\n"%(line, hkey)
+                
+                # if hkey is not None:
+                    #if True == knowledge.has_key(line):
+                        #print "Competidor en club {%s} para categoria %s\n"%(line, hkey)
                     
         del lines[:]
         
@@ -209,10 +202,10 @@ def dumpWeights():
             writer.writerow([c,weight[c], 1.0 * weight[c]/total])
                             
 if __name__ == '__main__':
-    extractByAcademy()
-    #extractByCategory()
+    #extractByAcademy()
+    extractByCategory()
                             
-    #dumpKnowledge()
+    dumpKnowledge()
     dumpBelts()
     dumpCategories()
     dumpGenders()

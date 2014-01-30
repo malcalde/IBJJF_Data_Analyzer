@@ -11,6 +11,9 @@ import re
 import csv
 import os
 import traceback
+import math
+
+import pyExcelerator as pycel
 
 from pdfminer.pdfparser import PDFParser
 from pdfminer.pdfdocument import PDFDocument, PDFNoOutlines
@@ -30,13 +33,14 @@ belt = None
 gender = None
 category = None
 weight = None
+game = None
 total = None
 hkey = None
-
 progress = ""
+workbook = None
 
 def cleanup():
-    global knowledge, academy, belt, gender, category, weight, total, hkey, progress
+    global knowledge, academy, belt, gender, category, weight, total, hkey, progress, workbook, game
  
     knowledge = dict()
     academy = dict()
@@ -44,11 +48,14 @@ def cleanup():
     gender = dict()
     category = dict()
     weight = dict()
+    game = dict()
 
     total = 0
     hkey = ''
 
     progress = ''
+    
+    workbook = None
 
 def whoAmI():
     stack = traceback.extract_stack()
@@ -167,7 +174,6 @@ def extractByCategory(filename):
         return
     
     data = None
-    isClub = False
      
     fp = open(filename, 'rb')
     parser = PDFParser(fp)
@@ -198,20 +204,9 @@ def extractByCategory(filename):
             
             if line.count('/') == 3:
                 data = line.split('/')
-
                 processData(data, True)
-                
-                isClub =True
             elif line.startswith('TOTAL'):
-                isClub = False
-                #print "Total para %s: %i\n"%(hkey,int(line.replace('TOTAL:','').strip()))
-            else:
-                if isClub:
-                    line = line.encode('ascii', 'ignore').upper().strip()
-                    if False == knowledge.has_key(line) or False == knowledge[line].has_key(hkey):
-                        #assert False, "Found absurd data with missing record (%s,%s)\n"%(line,hkey)
-                        print "Found absurd tupla(%s,%s)\n"%(line,hkey)
-                    
+                game[hkey] = int(line.replace('TOTAL:','').strip())
                     
         del lines[:]
        
@@ -302,55 +297,83 @@ def extractFromResults(filename):
                     
         del lines[:]
  
-def dumpKnowledge():
-    with open('../data/data.csv', 'wb') as csvfile:
+def dumpKnowledge(filename):
+    with open(os.path.join(filename,'data.csv'), 'wb') as csvfile:
+        
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow(["Academy","Belt","Category","Gender","Weight","#Athlete","#Gold","#Silver","#Bronze"])
+
         for c in knowledge.keys():
             for h in knowledge[c].keys():
                 writer.writerow([c,knowledge[c][h][0],knowledge[c][h][1],knowledge[c][h][2],knowledge[c][h][3],knowledge[c][h][4],knowledge[c][h][5],knowledge[c][h][6],knowledge[c][h][7]])
+        print "Generating filename '%s'\n"%(os.path.join(filename,'data.csv'))        
 
-def dumpBelts():
-    with open('../data/belts.csv', 'wb') as csvfile:
+def dumpBelts(filename):
+    with open(os.path.join(filename,'belts.csv'), 'wb') as csvfile:
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow(["Belt","#Athlete","% Athlete"])
         for c in belt.keys():
             writer.writerow([c,belt[c], 1.0 * belt[c]/total])
+        print "Generating filename '%s'\n"%(os.path.join(filename,'belts.csv')) 
 
-def dumpCategories():
-    with open('../data/categories.csv', 'wb') as csvfile:
+def dumpCategories(filename):
+    with open(os.path.join(filename,'categories.csv'), 'wb') as csvfile:
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow(["Category","#Athlete","% Athlete"])
         for c in category.keys():
             writer.writerow([c,category[c], 1.0 * category[c]/total])
+        print "Generating filename '%s'\n"%(os.path.join(filename,'categories.csv')) 
 
-def dumpGenders():
-    with open('../data/genders.csv', 'wb') as csvfile:
+def dumpGenders(filename):
+    with open(os.path.join(filename,'genders.csv'), 'wb') as csvfile:
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow(["Gender","#Athlete","% Athlete"])
         for c in gender.keys():
             writer.writerow([c,gender[c], 1.0 * gender[c]/total])
+        print "Generating filename '%s'\n"%(os.path.join(filename,'genders.csv')) 
 
-def dumpWeights():
-    with open('../data/weights.csv', 'wb') as csvfile:
+def dumpWeights(filename):
+    with open(os.path.join(filename,'weights.csv'), 'wb') as csvfile:
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow(["Weight","#Athlete","% Athlete"])
         for c in weight.keys():
             writer.writerow([c,weight[c], 1.0 * weight[c]/total])
+        print "Generating filename '%s'\n"%(os.path.join(filename,'weights.csv')) 
 
-def dumpAcademy():
-    with open('../data/academies.csv', 'wb') as csvfile:
+def dumpGames(filename):
+    with open(os.path.join(filename,'games.csv'), 'wb') as csvfile:
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
-        writer.writerow(["Academy","#Athlete","% Athlete", "#Gold","#Silver","#Bonze","% Success"])
+        writer.writerow(["Game","#Athlete","Avg. round"])
+        for c in game.keys():
+            n = math.modf(math.log(game[c],2)) 
+            if n[0] > 0.0:
+                e = game[c] - math.pow(n[1], 2)
+                e *= n[1]
+                ne = math.pow(n[1], 2)
+                ne *= (n[1] +1)
+                ne = (ne +e) / game[c]
+                writer.writerow([c,game[c],ne])
+            else:    
+                writer.writerow([c,game[c], n[1]])
+        print "Generating filename '%s'\n"%(os.path.join(filename,'games.csv')) 
+
+def dumpAcademy(filename):
+    with open(os.path.join(filename,'academies.csv'), 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
+        writer.writerow(["Academy","#Athlete","% Athlete", "#Gold","#Silver","#Bonze","% Success","#Score"])
         for c in academy.keys():
             p = 1.0 * academy[c][0]
             s = 1.0 * (academy[c][1] + academy[c][2] + academy[c][3])
             s /= p
             p /= total
+            v = (3.0 * academy[c][1] + 2.0 * academy[c][2] + 1.0 * academy[c][3])
+            v /= p
             try:
-                writer.writerow([c,academy[c][0],p,academy[c][1],academy[c][2],academy[c][3],s])
+                writer.writerow([c,academy[c][0],p,academy[c][1],academy[c][2],academy[c][3],s,v])
             except:
-                print "Error generating academy data (%s-%s-%s)\n"%(total,c,academy[c])                
+                print "Error generating academy data (%s-%s-%s)\n"%(total,c,academy[c])
+        print "Generating filename '%s'\n"%(os.path.join(filename,'academies.csv')) 
+                        
 if __name__ == '__main__':
     
     for root, directories, files in os.walk('../data'):
@@ -360,14 +383,16 @@ if __name__ == '__main__':
             cleanup()
             
             extractByAcademy(os.path.join(filename, 'RegistrationsByAcademy.pdf'))
-            #extractByCategory(os.path.join(filename, 'RegistrationsByCategoryAndAcademy.pdf'))
+            extractByCategory(os.path.join(filename, 'RegistrationsByCategoryAndAcademy.pdf'))
             extractFromResults(os.path.join(filename, 'Results.pdf'))
-                                    
-            dumpKnowledge()
-            dumpBelts()
-            dumpCategories()
-            dumpGenders()
-            dumpAcademy()	
-            dumpWeights()                        
+            
+            dumpKnowledge(filename)
+            dumpBelts(filename)
+            dumpCategories(filename)
+            dumpGenders(filename)
+            dumpAcademy(filename)	
+            dumpWeights(filename)
+            dumpGames(filename)
+                                  
                             
     

@@ -114,6 +114,8 @@ def extractByAcademy(filename):
         print "[WARM] Missing file '%s' in '%s'\n"%(filename, whoAmI()) 
         return
 
+    print "[INFO] Processing file '%s' in '%s'\n"%(filename,whoAmI())
+
     tmp = None
     club = None
     
@@ -141,6 +143,9 @@ def extractByAcademy(filename):
         lines = parseLTObjects(layout,pageno)
 
         for line in lines:
+            line = line.replace('(','')
+            line = line.replace(')','')
+            
             if line.count('/') == 3:
                 if club is None: club = tmp 
                 data = line.split('/')
@@ -160,7 +165,11 @@ def extractByAcademy(filename):
                     knowledge[club][hkey].append(0) #bronze medals
                 #print "{%s-%s}Processing line %s - %i\n"%(club,hkey,line, knowledge[club][hkey][4])
             elif line.startswith('TOTAL'):
-                academy[club] = [int(line.replace('TOTAL:','').strip()),0,0,0]
+                try:
+                    academy[club] = [int(line.replace('TOTAL:','').strip()),0,0,0]
+                except ValueError:
+                    print "Value Error at line '%s' in %s\n"%(line,whoAmI())
+                    academy[club] = 1
                 club = None
             else:
                 tmp = line.strip()
@@ -173,6 +182,8 @@ def extractByCategory(filename):
         print "[WARM] Missing file '%s' in '%s'\n"%(filename, whoAmI()) 
         return
     
+    print "[INFO] Processing file '%s' in '%s'\n"%(filename,whoAmI())
+    
     data = None
      
     fp = open(filename, 'rb')
@@ -182,7 +193,7 @@ def extractByCategory(filename):
     
     if not document.is_extractable: raise Exception()#PDFTextExtractionNotAllowed()
     
-    pageno = 0	 
+    pageno = 0   
     rsrcmgr = PDFResourceManager()
     
     laparams = LAParams()
@@ -201,13 +212,18 @@ def extractByCategory(filename):
         lines = parseLTObjects(layout,pageno)
 
         for line in lines:
+            line = line.replace('(','')
+            line = line.replace(')','')
             
             if line.count('/') == 3:
                 data = line.split('/')
                 processData(data, True)
             elif line.startswith('TOTAL'):
-                game[hkey] = int(line.replace('TOTAL:','').strip())
-                    
+                try:
+                    game[hkey] = int(line.replace('TOTAL:','').strip())
+                except ValueError:
+                    print "Value Error at line '%s'in %s\n"%(line,whoAmI())
+                    game[hkey] = 1
         del lines[:]
        
 def extractFromResults(filename):
@@ -216,6 +232,7 @@ def extractFromResults(filename):
         print "[WARM] Missing file '%s' in '%s'\n"%(filename, whoAmI()) 
         return
 
+    print "[INFO] Processing file '%s' in '%s'\n"%(filename,whoAmI())
     
     data = None
     category = None
@@ -362,13 +379,13 @@ def dumpAcademy(filename):
         writer = csv.writer(csvfile, delimiter=',',quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerow(["Academy","#Athlete","% Athlete", "#Gold","#Silver","#Bonze","% Success","#Score"])
         for c in academy.keys():
-            p = 1.0 * academy[c][0]
-            s = 1.0 * (academy[c][1] + academy[c][2] + academy[c][3])
-            s /= p
-            p /= total
-            v = (3.0 * academy[c][1] + 2.0 * academy[c][2] + 1.0 * academy[c][3])
-            v /= p
             try:
+                p = 1.0 * academy[c][0]
+                s = 1.0 * (academy[c][1] + academy[c][2] + academy[c][3])
+                s /= p
+                p /= total
+                v = (3.0 * academy[c][1] + 2.0 * academy[c][2] + 1.0 * academy[c][3])
+                v /= p
                 writer.writerow([c,academy[c][0],p,academy[c][1],academy[c][2],academy[c][3],s,v])
             except:
                 print "Error generating academy data (%s-%s-%s)\n"%(total,c,academy[c])
@@ -390,7 +407,7 @@ if __name__ == '__main__':
             dumpBelts(filename)
             dumpCategories(filename)
             dumpGenders(filename)
-            dumpAcademy(filename)	
+            dumpAcademy(filename)   
             dumpWeights(filename)
             dumpGames(filename)
                                   

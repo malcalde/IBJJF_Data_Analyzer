@@ -20,6 +20,7 @@
 000149-world-nogi-2012
 
 # European Jiu-Jitsu IBJJF Championship
+000652-europa-gi-2017
 000490-europa-gi-2016
 000352-europa-gi-2015
 000232-europa-gi-2014
@@ -33,9 +34,12 @@
 000142-europa-nogi-2012
 
 # Berlin International Open IBJJF Jiu-Jitsu Championship
+000635-berlin-gi-2016
 000465-berlin-gi-2015
 
+
 # Berlin International Open IBJJF Jiu-Jitsu No-Gi Championship
+000636-berlin-nogi-2016
 000466-berlin-nogi-2015
 
 # British National IBJJF Jiu-Jitsu Championship
@@ -53,7 +57,7 @@
 000261-copenhagen-nogi-2014
 
 # Madrid International Open IBJJF Jiu-Jitsu Championship
-000642-madrid-nogi-2016
+000642-madrid-gi-2016
 000473-madrid-gi-2015
 000326-madrid-gi-2014
 

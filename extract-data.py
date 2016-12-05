@@ -16,6 +16,7 @@ import html2text
 import urllib2
 import sqlite3
 import hashlib
+import timeit
 
 from datetime import date
 
@@ -63,7 +64,12 @@ CLASS_AGE_RANGE = {
         'JUVENILE 2': -17,
         'JUVENILE': -17,
         'ADULT': -18-6,
-        'MASTER 1': -30-2
+        'MASTER 1': -30-3,
+        'MASTER 2': -36-3,
+        'MASTER 3': -41-3,
+        'MASTER 4': -46-3,
+        'MASTER 5': -51-3,
+        'MASTER 6': -56-1
     }
 }
 
@@ -74,6 +80,7 @@ my_competition = None
 my_competitor = None
 my_academy = None
 my_result = None
+my_team = None
 
 def whoAmI():
     stack = traceback.extract_stack()
@@ -90,7 +97,7 @@ def printProgress(maxValue=-1, tag='R'):
         printProgress.value+=1
         progressPercent = int(100 * (1.0 * printProgress.value/printProgress.maxValue))
         if printProgress.progressPercent != progressPercent: 
-            print "[" + (progressPercent * printProgress.progressChar) + ((100 - progressPercent) * " ") + "]"
+            print "\t\t[" + (progressPercent * printProgress.progressChar) + ((100 - progressPercent) * " ") + "]"
             printProgress.progressPercent = progressPercent
         
 
@@ -128,11 +135,11 @@ def extractByAcademy(url):
     competitionLocation = url_parts[1]
     competitionMode = url_parts[2]
     competitionYear = url_parts[3].replace('\n','')
-    competitionName = url
+    competitionName = url.replace('\n','')
 
     try:
         url = "https://www.ibjjfdb.com/ChampionshipResults/%s/PublicAcademyRegistration?lang=en-US"%(competitionID)
-        print "[INFO] Processing event(by academy dimension) '%s'"%(url)
+        print "[INFO] Processing event '%s' (by academy dimension) '%s'"%(competitionName, url)
 
         h2t = html2text.HTML2Text()
         h2t.ignore_links = True
@@ -149,7 +156,11 @@ def extractByAcademy(url):
         html = urlcon.read()
         lines = h2t.handle(html.decode('utf8'))  
         lines = lines.split("\n")
-    except Exception, e: print e
+    except Exception, e: 
+        print "[ERROR] Processing event(by academy dimension) '%s - %s'"%(url, e)
+        return 
+
+    insertOrUpdateCompetition(competitionID, competitionName, competitionLocation, competitionYear, competitionMode)     
     
     printProgress(maxValue=len(lines), tag='A')
     for line in lines:
@@ -202,11 +213,11 @@ def extractByDivision(url):
     competitionLocation = url_parts[1]
     competitionMode = url_parts[2]
     competitionYear = url_parts[3].replace('\n','')
-    competitionName = url
+    competitionName = url.replace('\n','')
 
     try:
         url = "https://www.ibjjfdb.com/ChampionshipResults/%s/PublicRegistrations?lang=en-US"%(competitionID)
-        print "[INFO] Processing event(by division dimension) '%s'"%(url)
+        print "[INFO] Processing event '%s' (by division dimension) '%s'"%(competitionName, url)
 
         h2t = html2text.HTML2Text()
         h2t.ignore_links = True
@@ -223,7 +234,11 @@ def extractByDivision(url):
         html = urlcon.read()
         lines = h2t.handle(html.decode('utf8'))  
         lines = lines.split("\n")
-    except Exception, e: print e
+    except Exception, e: 
+        print "[ERROR] Processing event(by division dimension) '%s - %s'"%(url, e)
+        return
+
+    insertOrUpdateCompetition(competitionID, competitionName, competitionLocation, competitionYear, competitionMode)
 
     printProgress(maxValue=len(lines), tag='D')
     for line in lines:
@@ -262,12 +277,13 @@ def extractByDivision(url):
 
                 #print "Found total competitors '%s': %s"%(my_category, line)
             except Exception,e:
-                print e
-                print "Value Error at line '%s' in %s\n"%(line,whoAmI())
+                print "Value Error (%s) at line '%s' in %s\n"%(e, line,whoAmI())
         
     del lines[:]
 
 def extractFromResults(url):
+    start_time = timeit.default_timer()
+
     data = None
     category = None
     club = None
@@ -276,21 +292,20 @@ def extractFromResults(url):
 
     competitionID = url_parts[0]
     competitionLocation = url_parts[1]
-    competitionMode = url_parts[2]
+    competitionMode = url_parts[2].upper()
     competitionYear = url_parts[3].replace('\n','')
-    competitionName = url 
+    competitionName = url.replace('\n','') 
 
     if True == my_competition.has_key(competitionID) and my_competition[competitionID]:
         print "Competition (%s) %s-%s already loaded."%(competitionID, competitionLocation, competitionYear) 
         return
 
     extractByAcademy(url)
-    return
-    #extractByDivision(url)  
+    extractByDivision(url)  
 
     try:
         url = "https://www.ibjjfdb.com/ChampionshipResults/%s/PublicResults?lang=en-US"%(competitionID)
-        print "[INFO] Processing event(by result dimension) '%s'"%(url)
+        print "[INFO] Processing event '%s' (by result dimension) '%s'"%(competitionName, url)
 
         h2t = html2text.HTML2Text()
         h2t.ignore_links = True
@@ -307,8 +322,11 @@ def extractFromResults(url):
         html = urlcon.read()
         lines = h2t.handle(html.decode('utf8'))  
         lines = lines.split("\n")
-    except Exception, e: print e
+    except Exception, e: 
+        print "[ERROR] Processing event(by results dimension) '%s - %s'"%(url, e)
+        return
 
+    insertedResult = 0    
     rowID = ''
 
     printProgress(maxValue=len(lines), tag='R')
@@ -337,17 +355,22 @@ def extractFromResults(url):
             rowID = competitionID + "_" + _rowID + "_" + competitorID
 
             insertOrUpdateResult(rowID, competitionID, academyID, competitorID, category[0],category[1], category[2], category[3],position)
-            
+            insertedResult += 1
         elif line.startswith("## "):
             competitionName = line.replace('## ', '').strip()
             insertOrUpdateCompetition(competitionID, competitionName, competitionLocation, competitionYear, competitionMode)   
         else: pass #print "[unknown line]: %s"%(line)   
 
-    markCompetitionAsLoaded(competitionID)             
+    if insertedResult > 0:
+        ellapsed_time = timeit.default_timer() - start_time
+        print "[INFO] Processed %s lines of event '%s' in %.2f sg."%(len(lines),competitionName, ellapsed_time)    
+        markCompetitionAsLoaded(competitionID)             
     del lines[:]
 
 
 def insertOrUpdateAcademy(academy):
+    global my_academy, my_competition, my_competitor, my_result
+
     academy = academy.encode('ascii', 'ignore').replace("'", "\"")
 
     if True == my_academy.has_key(academy):
@@ -366,6 +389,8 @@ def insertOrUpdateAcademy(academy):
     return rowID
 
 def insertOrUpdateCompetition(id, name, location, year, mode):
+    global my_academy, my_competition, my_competitor, my_result
+
     if False == my_competition.has_key(id):
         stm = "INSERT INTO competition VALUES ('%s','%s','%s',%s, '%s', %s)"%(id, name,location, year, mode, '0')
     elif False == my_competition[id]:
@@ -380,6 +405,8 @@ def insertOrUpdateCompetition(id, name, location, year, mode):
     my_competition[id] = False
 
 def markCompetitionAsLoaded(id):
+    global my_academy, my_competition, my_competitor, my_result
+
     stm = "UPDATE competition SET is_loaded = 1 WHERE id ='%s'"%(id)
     if SHOW_SQL_STATEMENTS: print stm
 
@@ -389,6 +416,8 @@ def markCompetitionAsLoaded(id):
     my_competition[id] = True
 
 def insertOrUpdateCompetitor(name, year=0):
+    global my_academy, my_competition, my_competitor, my_result
+
     name = name.encode('ascii', 'ignore').replace("'", "\"") 
 
     if True == my_competitor.has_key(name):
@@ -412,35 +441,96 @@ def insertOrUpdateCompetitor(name, year=0):
     return rowID
 
 def insertOrUpdateResult(id, competitionID, academyID, competitorID, belt, category, gender, weight, position):
+    global my_academy, my_competition, my_competitor, my_result
+
+    id = id.replace('_#','').strip()
+
     my_md5.update(id)
     rowID = my_md5.hexdigest()
+    if True == my_result.has_key(id): rowID = my_result[id]
+
+    belt = belt.replace('#','').strip()
+    category = category.replace('#','').strip()
+    gender = gender.replace('#','').strip()
+    weight = weight.replace('#','').strip()
 
     if False == my_result.has_key(rowID):
-        stm = "INSERT INTO result VALUES ('%s','%s','%s','%s','%s','%s','%s','%s',%s)"%(rowID, competitionID, academyID, competitorID, belt, category, gender, weight, position)
-    elif 0 != my_result[rowID]: 
+        stm = "INSERT INTO result VALUES ('%s','%s','%s','%s','%s','%s','%s','%s',%s,'%s')"%(rowID, competitionID, academyID, competitorID, belt, category, gender, weight, position,id)
+    elif 0 != position: 
         stm = "UPDATE result SET medal=%s WHERE id='%s'"%(position, rowID)
     else: 
         return
 
     if SHOW_SQL_STATEMENTS: print stm
 
-    my_db.execute(stm)
-    my_db.commit()
+    try:
+        my_db.execute(stm)
+        my_db.commit()
+    except sqlite3.IntegrityError, e:
+        print "[WARN] Why %s(%s) or %s(%s) not found in cache? "%(rowID, my_result.has_key(rowID), id, my_result.has_key(id))
 
-    my_competitor[id] = rowID
+    my_result[id] = rowID
+    my_result[rowID] = position
 
     return rowID
 
+def createTeam():
+    global my_team
+    team = None
+    
+    srcs = open("my-team-data.txt", "r")
+    for row in srcs:
+        row = row.replace('\n','')
+        match = re.match(r"\[.*\]", row)
+        if match is not None:
+            team = row.upper()
+            team = team.replace('[','')
+            team = team.replace(']','')
+        else:
+            for cow in my_db.execute("SELECT * FROM competitor where name = '%s'"%(row)):
+                if False == my_team.has_key(cow[0]):
+                    print "[INFO] new team '%s' member: %s"%(team,cow[1])
+                    stm = "INSERT INTO team VALUES ('%s', '%s')"%(team,cow[0])
+                    my_db.execute(stm)
+            my_db.commit()
+
 def initialiseDB():
+    global my_academy, my_competition, my_competitor, my_result, my_team
+
     stm = 'CREATE TABLE IF NOT EXISTS academy(id  text PRIMARY KEY ASC, name text)'
     my_db.execute(stm)
     stm = 'CREATE TABLE IF NOT EXISTS competition(id text PRIMARY KEY ASC, name text, location text, year integer, mode text, is_loaded integer)'
     my_db.execute(stm)
     stm = 'CREATE TABLE IF NOT EXISTS competitor(id  text PRIMARY KEY ASC, name text, birth_year integer)'
     my_db.execute(stm)
-    stm = 'CREATE TABLE IF NOT EXISTS result(id  text PRIMARY KEY ASC, competition text, academy text, competitor text, belt text, category text, gender text, weight text, medal integer)'
+    stm = 'CREATE TABLE IF NOT EXISTS result(id text PRIMARY KEY ASC, competitionID text, academyID text, competitorID text, belt text, category text, gender text, weight text, medal integer, rawID text)'
+    my_db.execute(stm)
+    stm = "CREATE TABLE IF NOT EXISTS team(id text, competitorID text)" 
+    my_db.execute(stm)
+    stm = "CREATE TABLE IF NOT EXISTS lk_medal as select 0 id,'N/A' name union select 1,'GOLD' union select 2,'SILVER' union select 3,'BRONZE'"
     my_db.execute(stm)
     my_db.commit()
+
+    stm = """CREATE VIEW IF NOT EXISTS v_result as 
+            select T.name competition, T.year year, T.mode mode, A.name academy, C.name competitor, C.birth_year estimated_birth_year,
+                   R.gender, R.belt, R.category, R.weight, m.name medal 
+             from result R, competition T, academy A, competitor C, lk_medal M
+            where R.medal=M.id
+              and C.id = R.competitorID
+	          and A.id = R.academyID
+              and T.id=R.competitionID
+    """
+    my_db.execute(stm)
+    my_db.commit()
+
+    stm = """CREATE VIEW IF NOT EXISTS v_team_competition as 
+             select printf("%s_%s_%s_%s_%s_%",R.competitionID, R.belt,R.category, R.gender,R.weight) pattern, 
+                    R.competitionID, R.competitorID
+                from result R, team T
+               where R.competitorID = T.competitorID
+    """
+    #my_db.execute(stm)
+    #my_db.commit()
 
     for row in my_db.execute('SELECT * FROM academy'):
         my_academy[row[1]] = row[0] 
@@ -451,28 +541,42 @@ def initialiseDB():
 
     for row in my_db.execute('SELECT * FROM competitor'):
         my_competitor[row[1]] = row[0]
+    
+    for row in my_db.execute('SELECT * FROM team'):
+            my_team[row[1]] = row[0]
 
     for row in my_db.execute('SELECT * FROM result'):
-        my_result[row[0]] = row[8]  
+        my_result[row[9]] = row[8]
+        my_result[row[0]] = row[8] 
 
 if __name__ == '__main__':
-    
+    start_time = timeit.default_timer()
+
     my_competition = {}  
     my_competitor = {}
     my_academy = {}
     my_result = {}
+    my_team = {}
 
-    my_db = sqlite3.connect('my-ibjjf.db')
+    my_db = sqlite3.connect('data/my-ibjjf.db')
     my_md5 = hashlib.md5()
 
     initialiseDB()
+
+    if True: 
+        srcs = open("data/my-source-data.txt", "r")
+        for row in srcs:
+            if (row.startswith('#')):
+                print " "
+                print "#####################################################"
+                print row[:-1]
+                print "#####################################################"
+            elif 3 == row.count('-'): 
+                extractFromResults(row)
+   	
+	createTeam()                                 
+        my_db.close()                      
     
-    srcs = open("extract-data.txt", "r")
-    for row in srcs:
-        if (row.startswith('#')):
-            print row
-        elif 3 == row.count('-'): 
-            extractFromResults(row)
-                                  
-    my_db.close()                      
-    
+
+    ellapsed_time = timeit.default_timer() - start_time
+    print "[INFO] Source data processed %.2f sg."%(ellapsed_time)  

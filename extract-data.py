@@ -63,13 +63,13 @@ CLASS_AGE_RANGE = {
         'JUVENILE 1': -16,
         'JUVENILE 2': -17,
         'JUVENILE': -17,
-        'ADULT': -18-6,
-        'MASTER 1': -30-3,
-        'MASTER 2': -36-3,
-        'MASTER 3': -41-3,
-        'MASTER 4': -46-3,
-        'MASTER 5': -51-3,
-        'MASTER 6': -56-1
+        'ADULT': -18,
+        'MASTER 1': -30,
+        'MASTER 2': -36,
+        'MASTER 3': -41,
+        'MASTER 4': -46,
+        'MASTER 5': -51,
+        'MASTER 6': -56
     }
 }
 
@@ -78,6 +78,7 @@ my_md5 = None
 
 my_competition = None
 my_competitor = None
+my_helperCompetitorAge = None
 my_academy = None
 my_result = None
 my_team = None
@@ -86,6 +87,25 @@ def whoAmI():
     stack = traceback.extract_stack()
     filename, codeline, funcName, text = stack[-2]
     return funcName
+
+def getCompetitorAge(competitorID, competitorGender, competitorCategory, competitionYear):
+    global my_helperCompetitorAge
+
+    if len(competitorID) != len('ea644a4d1f1d0ba8df6534b7506222b5'):
+        my_md5.update(competitorID.encode('ascii', 'ignore').replace("'", "\""))
+        competitorID = my_md5.hexdigest()
+
+    if False == my_helperCompetitorAge.has_key(competitorID): 
+        age = int(competitionYear) + CLASS_AGE_RANGE[competitorGender][competitorCategory]
+        my_helperCompetitorAge[competitorID] = {'year': competitionYear, 'category': competitorCategory, 'age': age}
+    elif my_helperCompetitorAge[competitorID]['year'] < competitionYear:
+        my_helperCompetitorAge[competitorID]['year'] = competitionYear
+        if my_helperCompetitorAge[competitorID]['category'] != competitorCategory:
+            age = int(competitionYear) + CLASS_AGE_RANGE[competitorGender][competitorCategory]
+            my_helperCompetitorAge[competitorID]['age'] = age
+            my_helperCompetitorAge[competitorID]['category'] = competitorCategory
+
+    return my_helperCompetitorAge[competitorID]['age']
 
 def printProgress(maxValue=-1, tag='R'):
     if -1 != maxValue: 
@@ -189,10 +209,9 @@ def extractByAcademy(url):
         else:
             if academy is not None and category is not None:
                 academyID = insertOrUpdateAcademy(academy)
-                
-                year = date.today().year
-                year = year + CLASS_AGE_RANGE[category[2]][category[1]]
-                competitorID = insertOrUpdateCompetitor(line, year)
+            
+                competitorAge = getCompetitorAge(line.strip(),category[2],category[1],competitionYear)
+                competitorID = insertOrUpdateCompetitor(line, competitorAge)
 
                 rowID = competitionID + "_" + _rowID + "_" + competitorID
                 insertOrUpdateResult(rowID, competitionID, academyID, competitorID, category[0],category[1], category[2], category[3],0)
@@ -263,9 +282,10 @@ def extractByDivision(url):
                 academyID = insertOrUpdateAcademy(line_data[0].strip())
             if line_data[1].strip() != '': 
                 line_data[1] = line_data[1].strip()
-                year = date.today().year
-                year = year + CLASS_AGE_RANGE[category[2]][category[1]]
-                competitorID = insertOrUpdateCompetitor(line_data[1].strip(), year) 
+
+                competitorAge = getCompetitorAge(line.strip(),category[2],category[1],competitionYear)
+                competitorID = insertOrUpdateCompetitor(line_data[1].strip(), competitorAge) 
+
             if category is not None and academyID is not None and competitorID is not None:
                 rowID = competitionID + "_" + _rowID + "_" + competitorID
                 insertOrUpdateResult(rowID, competitionID, academyID, competitorID, category[0],category[1], category[2], category[3],0)    
@@ -350,7 +370,9 @@ def extractFromResults(url):
             position = data[0].strip()
 
             academyID = insertOrUpdateAcademy(academyID)
-            competitorID = insertOrUpdateCompetitor(competitorID)
+
+            competitorAge = getCompetitorAge(competitorID,category[2],category[1],competitionYear)
+            competitorID = insertOrUpdateCompetitor(competitorID, competitorAge)
 
             rowID = competitionID + "_" + _rowID + "_" + competitorID
 
@@ -415,19 +437,19 @@ def markCompetitionAsLoaded(id):
 
     my_competition[id] = True
 
-def insertOrUpdateCompetitor(name, year=0):
+def insertOrUpdateCompetitor(name, competitorYear=0):
     global my_academy, my_competition, my_competitor, my_result
 
     name = name.encode('ascii', 'ignore').replace("'", "\"") 
 
     if True == my_competitor.has_key(name):
         return my_competitor[name]
-
+    
     my_md5.update(name)
     rowID = my_md5.hexdigest()
 
     if False == my_competitor.has_key(name):
-        stm = "INSERT INTO competitor VALUES ('%s','%s', %s)"%(rowID, name, year)
+        stm = "INSERT INTO competitor VALUES ('%s','%s', %s)"%(rowID, name, competitorYear)
     else: 
         stm = "UPDATE competitor SET birth_year=%s WHERE birth_year < %s AND id = '%s'"%(year,year,rowID)
 
@@ -495,7 +517,7 @@ def createTeam():
             my_db.commit()
 
 def initialiseDB():
-    global my_academy, my_competition, my_competitor, my_result, my_team
+    global my_academy, my_competition, my_competitor, my_result, my_team, my_helperCompetitorAge
 
     stm = 'CREATE TABLE IF NOT EXISTS academy(id  text PRIMARY KEY ASC, name text)'
     my_db.execute(stm)
@@ -545,9 +567,12 @@ def initialiseDB():
     for row in my_db.execute('SELECT * FROM team'):
             my_team[row[1]] = row[0]
 
-    for row in my_db.execute('SELECT * FROM result'):
+    for row in my_db.execute('select R.*, C.year from result R, competition C where C.id=R.competitionID'):
         my_result[row[9]] = row[8]
-        my_result[row[0]] = row[8] 
+        my_result[row[0]] = row[8]
+
+        #competitorAge = getCompetitorAge(row[3],row[6], row[5],row[10])
+        #insertOrUpdateCompetitor(row[3], competitorAge)
 
 if __name__ == '__main__':
     start_time = timeit.default_timer()
@@ -557,6 +582,7 @@ if __name__ == '__main__':
     my_academy = {}
     my_result = {}
     my_team = {}
+    my_helperCompetitorAge = {}
 
     my_db = sqlite3.connect('data/my-ibjjf.db')
     my_md5 = hashlib.md5()
@@ -564,7 +590,7 @@ if __name__ == '__main__':
     initialiseDB()
 
     if True: 
-        srcs = open("data/my-source-data.txt", "r")
+        srcs = open("my-competition-data.txt", "r")
         for row in srcs:
             if (row.startswith('#')):
                 print " "

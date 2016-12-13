@@ -76,6 +76,9 @@ CLASS_AGE_RANGE = {
 my_db = None  
 my_md5 = None
 
+my_db_inserted = 0
+my_db_updated = 0
+
 my_competition = None
 my_competitor = None
 my_helperCompetitorAge = None
@@ -130,12 +133,12 @@ def processData(data, suffix=None):
 
     for i in range(0,len(data)):
         data[i] = data[i].replace('#### ','').strip()
-        hkey += data[i] + "_" 
+        hkey += data[i] + "-" 
 
     if suffix is not None:
-        hkey = suffix + "_" + hkey
+        hkey = suffix + "-" + hkey
                                
-    hkey = hkey.replace(' ', '_')
+    hkey = hkey.replace(' ', '-')
     hkey = hkey[:len(hkey)-1]
     hkey = hkey.upper()
     
@@ -213,7 +216,7 @@ def extractByAcademy(url):
                 competitorAge = getCompetitorAge(line.strip(),category[2],category[1],competitionYear)
                 competitorID = insertOrUpdateCompetitor(line, competitorAge)
 
-                rowID = competitionID + "_" + _rowID + "_" + competitorID
+                rowID = competitionID + "-" + _rowID + "-" + competitorID
                 insertOrUpdateResult(rowID, competitionID, academyID, competitorID, category[0],category[1], category[2], category[3],0)
             if academy is None:    
                 academy = line    
@@ -287,7 +290,7 @@ def extractByDivision(url):
                 competitorID = insertOrUpdateCompetitor(line_data[1].strip(), competitorAge) 
 
             if category is not None and academyID is not None and competitorID is not None:
-                rowID = competitionID + "_" + _rowID + "_" + competitorID
+                rowID = competitionID + "-" + _rowID + "-" + competitorID
                 insertOrUpdateResult(rowID, competitionID, academyID, competitorID, category[0],category[1], category[2], category[3],0)    
         elif line.startswith('**Total:**'):
             try:
@@ -374,7 +377,7 @@ def extractFromResults(url):
             competitorAge = getCompetitorAge(competitorID,category[2],category[1],competitionYear)
             competitorID = insertOrUpdateCompetitor(competitorID, competitorAge)
 
-            rowID = competitionID + "_" + _rowID + "_" + competitorID
+            rowID = competitionID + "-" + _rowID + "-" + competitorID
 
             insertOrUpdateResult(rowID, competitionID, academyID, competitorID, category[0],category[1], category[2], category[3],position)
             insertedResult += 1
@@ -437,7 +440,7 @@ def markCompetitionAsLoaded(id):
 
     my_competition[id] = True
 
-def insertOrUpdateCompetitor(name, competitorYear=0):
+def insertOrUpdateCompetitor(name, competitorYear=0, academyID=0):
     global my_academy, my_competition, my_competitor, my_result
 
     name = name.encode('ascii', 'ignore').replace("'", "\"") 
@@ -463,8 +466,23 @@ def insertOrUpdateCompetitor(name, competitorYear=0):
     return rowID
 
 def insertOrUpdateResult(id, competitionID, academyID, competitorID, belt, category, gender, weight, position):
-    global my_academy, my_competition, my_competitor, my_result
+    global my_academy, my_competition, my_competitor, my_result, my_db_inserted, my_db_updated
 
+    id = id.replace('-#','')
+    
+    id = id.replace('LIGHT-FEATHER','LIGHT_FEATHER')
+    id = id.replace('MEDIUM-HEAVY','MEDIUM_HEAVY')
+    id = id.replace('ULTRA-HEAVY','ULTRA_HEAVY')
+    id = id.replace('SUPER-HEAVY','SUPER_HEAVY')
+    id = id.replace('OPEN CLASS','OPEN_CLASS')
+    
+    id = id.replace('MASTER-1','MASTER_1')
+    id = id.replace('MASTER-2','MASTER_2')
+    id = id.replace('MASTER-3','MASTER_3')
+    id = id.replace('MASTER-4','MASTER_4')
+    id = id.replace('MASTER-5','MASTER_5')
+    id = id.replace('MASTER-6','MASTER_6')
+    
     id = id.replace('_#','').strip()
 
     my_md5.update(id)
@@ -478,8 +496,10 @@ def insertOrUpdateResult(id, competitionID, academyID, competitorID, belt, categ
 
     if False == my_result.has_key(rowID):
         stm = "INSERT INTO result VALUES ('%s','%s','%s','%s','%s','%s','%s','%s',%s,'%s')"%(rowID, competitionID, academyID, competitorID, belt, category, gender, weight, position,id)
+        my_db_inserted += 1
     elif 0 != position: 
         stm = "UPDATE result SET medal=%s WHERE id='%s'"%(position, rowID)
+        my_db_updated += 1
     else: 
         return
 
@@ -504,18 +524,47 @@ def createTeam():
     for row in srcs:
         row = row.replace('\n','')
         match = re.match(r"\[.*\]", row)
+        
         if match is not None:
             team = row.upper()
             team = team.replace('[','')
             team = team.replace(']','')
         else:
+            found = False
             for cow in my_db.execute("SELECT * FROM competitor where name = '%s'"%(row)):
-                if False == my_team.has_key(cow[0]):
+                found = my_team.has_key(cow[0])
+                if False == found:
                     print "[INFO] new team '%s' member: %s"%(team,cow[1])
-                    stm = "INSERT INTO team VALUES ('%s', '%s')"%(team,cow[0])
+                    stm = "INSERT INTO team VALUES ('%s', '%s', '%s')"%(team,cow[0],cow[1])
                     my_db.execute(stm)
+                    my_team[cow[0]] = cow[1]
+                    found = True
+                else: continue
+
+            if False == found:
+                rowID = insertOrUpdateCompetitor(row)
+                print "[INFO] new competitor '%s': %s"%(rowID, row)
+                stm = "INSERT INTO team VALUES ('%s', '%s', '%s')"%(team,rowID,row)
+                print "[INFO] new team '%s' member: %s"%(team,row)
+                my_db.execute(stm)      
             my_db.commit()
 
+def fixUnknownAcademy():
+    stm = """
+     select distinct R.competitorID, R. academyID
+       from result R, competition C
+      where academyID != '%s'
+        and  competitorID in (select distinct competitorID from result where academyID = '%s')
+      order by C.year
+    """%(my_academy['LAST UPDATED'], my_academy['LAST UPDATED'])
+   
+    for row in my_db.execute(stm):
+        stm = "update result set academyID='%s' where academyID='%s' and competitorID='%s'"%(row[1], my_academy['LAST UPDATED'], row[0])
+        my_db.execute(stm)
+        
+    my_db.commit()
+        
+    
 def initialiseDB():
     global my_academy, my_competition, my_competitor, my_result, my_team, my_helperCompetitorAge
 
@@ -527,7 +576,7 @@ def initialiseDB():
     my_db.execute(stm)
     stm = 'CREATE TABLE IF NOT EXISTS result(id text PRIMARY KEY ASC, competitionID text, academyID text, competitorID text, belt text, category text, gender text, weight text, medal integer, rawID text)'
     my_db.execute(stm)
-    stm = "CREATE TABLE IF NOT EXISTS team(id text, competitorID text)" 
+    stm = "CREATE TABLE IF NOT EXISTS team(id text, competitorID text, competitorName text)" 
     my_db.execute(stm)
     stm = "CREATE TABLE IF NOT EXISTS lk_medal as select 0 id,'N/A' name union select 1,'GOLD' union select 2,'SILVER' union select 3,'BRONZE'"
     my_db.execute(stm)
@@ -553,6 +602,12 @@ def initialiseDB():
     """
     #my_db.execute(stm)
     #my_db.commit()
+
+    for row in my_db.execute('select * from competition where is_loaded=0'):
+        stm = "delete from result where competitionID = '%s'"%(row[0])
+        r = my_db.execute(stm).rowcount
+        print "[INFO] Purged %d temporary results for competition %s"%(r,row[1]) 
+    my_db.commit()
 
     for row in my_db.execute('SELECT * FROM academy'):
         my_academy[row[1]] = row[0] 
@@ -600,9 +655,11 @@ if __name__ == '__main__':
             elif 3 == row.count('-'): 
                 extractFromResults(row)
    	
-	createTeam()                                 
-        my_db.close()                      
+    fixUnknownAcademy()   
+    createTeam()       
+                              
+    my_db.close()                      
     
 
     ellapsed_time = timeit.default_timer() - start_time
-    print "[INFO] Source data processed %.2f sg."%(ellapsed_time)  
+    print "[INFO] Source data (inserted: %d, updated: %d)processed in %.2f sg."%(my_db_inserted, my_db_updated, ellapsed_time)  

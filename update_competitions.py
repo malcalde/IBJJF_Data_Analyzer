@@ -75,3 +75,6 @@ for item in data:
                 
                 print "%s-%s-%s-%s"%(competitionID, competitionName, competitionMode, competitionYear)
     except: pass
+    
+print "\n# Upcoming events"
+print "000652-european-gi-2017"

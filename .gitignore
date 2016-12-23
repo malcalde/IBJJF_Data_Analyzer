@@ -1,3 +1,10 @@
 my-team-data.txt 
 
 my-competition-data.txt
+GFF_generate_report.sh
+my-competition-data.txt.sav
+my-fake_results.txt
+my_ibjjf_data_analyzer.cfg
+report_team_GFF.html
+report_team_GFF.md
+*.pyc

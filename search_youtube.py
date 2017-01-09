@@ -28,7 +28,7 @@ def doYoutubeSearch(query, maxresults=10):
   search_response = youtube.search().list(
     q=query,
     part="id,snippet",
-    order="publishedAt",
+    order="date",
     maxResults=maxresults
   ).execute()
 

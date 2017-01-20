@@ -587,39 +587,6 @@ def insertOrUpdateResult(id, competitionID, academyID, competitorID, belt, categ
 
     return rowID
 
-def createTeam():
-    global my_team
-    team = None
-    
-    srcs = open("my-team-data.txt", "r")
-    for row in srcs:
-        row = row.replace('\n','')
-        match = re.match(r"\[.*\]", row)
-        
-        if match is not None:
-            team = row.upper()
-            team = team.replace('[','')
-            team = team.replace(']','')
-        else:
-            found = False
-            for cow in my_db.execute("SELECT * FROM competitor where name = '%s'"%(row)):
-                found = my_team.has_key(cow[0])
-                if False == found:
-                    print "[INFO] new team '%s' member: %s"%(team,cow[1])
-                    stm = "INSERT INTO team VALUES ('%s', '%s', '%s')"%(team,cow[0],cow[1])
-                    my_db.execute(stm)
-                    my_team[cow[0]] = cow[1]
-                    found = True
-                else: continue
-
-            if False == found:
-                rowID = insertOrUpdateCompetitor(row)
-                print "[INFO] new competitor '%s': %s"%(rowID, row)
-                stm = "INSERT INTO team VALUES ('%s', '%s', '%s')"%(team,rowID,row)
-                print "[INFO] new team '%s' member: %s"%(team,row)
-                my_db.execute(stm)      
-            my_db.commit()
-
 def fixUnknownAcademy():
     stm = """
      select distinct R.competitorID, R. academyID
@@ -728,12 +695,10 @@ if __name__ == '__main__':
                 extractFromResults(row)
    	
     fixUnknownAcademy()   
-    #createTeam() 
     
     if 0 < (my_db_inserted + my_db_updated) or True:
         for row in my_db.execute('select competitorID, sum(score) from result group by competitorID'):
             print "update competitor set score=%s where id='%s'"%(row[1], row[0])
-            my_db.execute("update competitor set score=%s where id='%s'"%(row[1], row[0]))
              
         my_db.commit()
                               

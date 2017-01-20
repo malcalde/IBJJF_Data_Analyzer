@@ -22,25 +22,32 @@ from search_youtube import *
 
 from datetime import date
 
+#from update_competitions import competitionYear
+
 assert(len(sys.argv) > 1)
 MY_TEAM = sys.argv[1]
 
 DEBUG_SQL = False
 DEBUG_COMPETITORID = 'NOBODY'
 
+stm0 = "CREATE TABLE IF NOT EXISTS lk_belt as select distinct 0 id,  belt from result"
+stm1 = "update competition set is_loaded=0 where id='%s'"
+
 stmA = """ 
-  select  distinct C.id competitionID, C.name competitionName, T.competitorID competitorID, T.competitorName competidor_name, R.rawID
-  from result R, competition C, team T
+  select  distinct C.id competitionID, C.name competitionName, O.id competitorID, O.name competidor_name, R.rawID, R.belt, T.name
+  from result R, competition C, academy T, competitor O, lk_belt L
   where 1=1
-     and T.id = '%s'
-     and T.competitorID = R.competitorID
+     and L.belt = R.belt
+     and R.academyID = T.id
+     and O.id = R.competitorID
      and R.competitionID=C.id
-	 and C.is_loaded=0
-     order by T.competitorID, C.year
+     and T.id = '%s'
+     and C.is_loaded=0
+     order by L.id desc, O. birth_year, O.name, C.year
 """
 
-stmB = stm = """
-     select distinct R.competitorID, C.name 
+stmB = """
+select distinct R.competitorID, C.name 
   from result R, competition T, academy A, competitor C, lk_medal M
 where R.medal=M.id
   and C.id = R.competitorID
@@ -53,8 +60,8 @@ where R.medal=M.id
 stmC = """
 select C.name competitor, replace(A.name,'LAST UPDATED','???') academy, C.birth_year estimated_birth_year,  sum(1) competitions, sum(('N/A' != m.name)) medals,
              sum(('GOLD' == m.name)) medal_gold, sum(('SILVER' == m.name)) medal_silver, sum(('BRONZE' == m.name)) medal_bronze,
-             sum( (9 * ('GOLD' == m.name)) +  (3 * ('SILVER' == m.name)) + (1 * ('BRONZE' == m.name))) score,
-             C.id competitorID,  sum(('N/A' != m.name) and (r.weight == 'OPEN CLASS')) medals_openclass
+             sum(R.score) score,
+             C.id competitorID,  sum(('N/A' != m.name) and (r.weight == 'OPEN CLASS')) medals_openclass, C.id competitorID
 from result R, competition T, academy A, competitor C, lk_medal M
 where R.medal=M.id
   and C.id = R.competitorID
@@ -63,7 +70,7 @@ where R.medal=M.id
   and T.id=R.competitionID
   and C.id in %s
  group by  competitor
- order by medal_gold DESC, medal_silver DESC, medal_bronze DESC, medals DESC, competitions DESC
+ order by score DESC, medal_gold DESC, medal_silver DESC, medal_bronze DESC, medals DESC, competitions DESC
 """
 
 stmD = """
@@ -86,8 +93,8 @@ stmF = "select * from result where competitionID ='%s' and competitorID = '%s'"
 stmG = """
 select C.name competitor, replace(A.name,'LAST UPDATED','???') academy, C.birth_year estimated_birth_year,  sum(1) competitions, sum(('N/A' != m.name)) medals,
              sum(('GOLD' == m.name)) medal_gold, sum(('SILVER' == m.name)) medal_silver, sum(('BRONZE' == m.name)) medal_bronze,
-             sum( (9 * ('GOLD' == m.name)) +  (3 * ('SILVER' == m.name)) + (1 * ('BRONZE' == m.name))) score,
-             C.id competitorID, sum(('N/A' != m.name) and (r.weight == 'OPEN CLASS')) medals_openclass
+             sum(R.score) score,
+             C.id competitorID, sum(('N/A' != m.name) and (r.weight == 'OPEN CLASS')) medals_openclass, C.id competitorID
 from result R, competition T, academy A, competitor C, lk_medal M
 where R.medal=M.id
   and C.id = R.competitorID
@@ -99,8 +106,26 @@ where R.medal=M.id
  order by medal_gold DESC, medal_silver DESC, medal_bronze DESC, medals DESC, competitions DESC
 """
 
+stmH = """
+    select name from academy where id = '%s'
+"""
+
+stmI = """
+    update competitor set score=%s where id='%s'
+"""
+
+stmJ = "select  belt,category,weight from result where competitionID = '%s' and competitorID = '%s'"
+
 my_db = sqlite3.connect('data/my-ibjjf.db')
 assert (my_db is not None),"Fail opening database"
+
+my_db.execute(stm0)
+my_db.commit()
+
+if(len(sys.argv) > 2):
+    for competitionID in sys.argv[2:]:
+        my_db.execute(stm1%(competitionID))
+    my_db.commit()
 
 srcs = open("my-fake_results.txt", "r")
 for row in srcs:
@@ -179,14 +204,28 @@ competitorID = None
 competitionName = None
 resultFilter = None
 
-print "# Informe competiciones - Team: '%s'.\n' "%(MY_TEAM)
+MY_TEAM_NAME = None
+for row_h in my_db.execute(stmH%(MY_TEAM)):
+    MY_TEAM_NAME = row_h[0]
+    
+if MY_TEAM_NAME is None:
+    print "# Not foudn record for academy: '%s'.\n' "%(MY_TEAM)
+    sys.exit(1)
+
+print "# Informe competiciones - Team: '%s'.\n' "%(MY_TEAM_NAME)
 
 if DEBUG_SQL or competitorID == DEBUG_COMPETITORID:
     print 100*'='
     print stmA%(MY_TEAM)
     print 100*'='
 
+my_competitors = []
+
 for row in my_db.execute(stmA%(MY_TEAM)):
+    if "%s_%s"%(row[0], row[2]) in my_competitors: 
+        continue
+    my_competitors.append("%s_%s"%(row[0], row[2])) 
+    
     if competitorID != row[2] or competitorID is None: 
         my_record = ""
         if competitorID is not None: print "\n%s"%(80*'-')
@@ -196,16 +235,20 @@ for row in my_db.execute(stmA%(MY_TEAM)):
                 my_medals = ""
                 if ((row_t[5]+ row_t[6] + row_t[7])):
                     my_medals = "(%s,%s,%s)"%(row_t[5], row_t[6], row_t[7])
-                my_record = "* __Record__: _%s medallas en %s IBJJF competition_ record %s - __exito__: %.2f - __score__: %s."%(row_t[4], (row_t[3]-1), my_medals, 100.0 * (1.0 * (row_t[4]-row_t[10])/(row_t[3]-1)), row_t[8])
+                my_record = "* __Record__: _%s medallas en %s IBJJF competition_ record %s - __exito__: %.2f - __score__: %.2f."%(row_t[4], (row_t[3]-1), my_medals, 100.0 * (1.0 * (row_t[4]-row_t[10])/(row_t[3]-1)), row_t[8])
+                my_db.execute(stmI%(row_t[8], row_t[11]))
         
         print "## Competidor: %s\n%s"%(row[3].title(), my_record)
         competitionID = None
     else: 
         print "[ERROR] Failed check team condition (%s != %s or %s is None)"%(competitorID,row[2],competitorID)
         continue
-        
+         
     if competitionID != row[0]:
-          print "\n### Competicion: %s.\n"%(row[1]) 
+        my_class = ""
+        for row_jjj in my_db.execute(stmJ%(row[0],row[2])):
+                my_class = " [%s/%s/%s]"%(row_jjj[0], row_jjj[1], row_jjj[2])
+        print "\n### Competicion: %s%s.\n"%(row[1], my_class) 
 
     competitionID = row[0]
     competitionName = row[1]
@@ -233,8 +276,10 @@ for row in my_db.execute(stmA%(MY_TEAM)):
     for row_t in my_db.execute(stmC%(filterOponents)):
         if row_t[3] > 1:
             oponents[row_t[9]] = row_t[0].title()
-            print "* Oponente: (%s) %s - %s medallas en %s competiciones (%s,%s,%s) - %.2f %% exito - score: %s."%(row_t[1].title(), row_t[0].title(), 
+            print "* Oponente: (%s) %s - %s medallas en %s competiciones (%s,%s,%s) - %.2f %% exito - score: %.2f."%(row_t[1].title(), row_t[0].title(), 
                      row_t[4], (row_t[3]-1), row_t[5], row_t[6], row_t[7], 100.0 * (1.0 * (row_t[4]-row_t[10])/(row_t[3]-1)), row_t[8])
+            
+            my_db.execute(stmI%(row_t[8], row_t[11]))
             
             videos = doYoutubeSearch("BJJ + \"%s\""%(row_t[0].title()), 3)
             if (len(videos) > 0):
@@ -255,7 +300,8 @@ for row in my_db.execute(stmA%(MY_TEAM)):
              
         else:
             print "* Oponente: (%s) %s - _NO SE ENCONTRO EXPERIENCIA PREVIA_."%(row_t[1].title(), row_t[0].title())
-            
+    
+    my_db.commit()        
 
     print "\n#### Historial oponentes.\n"
     for row_op in oponents.keys():

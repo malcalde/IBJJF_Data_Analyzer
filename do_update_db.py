@@ -181,6 +181,7 @@ def getCompetitionLocation(url):
         gmaps = googlemaps.Client(key=my_map_api_key)
         for geomap in gmaps.geocode(my_address):
         	geocode = (geomap['geometry']['location']['lat'], geomap['geometry']['location']['lng'])
+		print "[INFO] Geocode for '%s': %s"%(my_address, geocode)
 		break
     
     return geocode
@@ -302,7 +303,7 @@ def getCompetitions(withPastCompetition=True):
                     
                     competitionName = competitionName.lower()
                     
-                    if -1 == competitionName.find(' no-gi'):
+                    if -1 == competitionName.find('no-gi'):
                         competitionMode = 'gi'
                     else:
                         competitionMode = 'nogi'
@@ -324,6 +325,7 @@ def getCompetitions(withPastCompetition=True):
                     competitionName = competitionName.replace('autumn', '')
                     competitionName = competitionName.replace('summer', '')
                     competitionName = competitionName.replace('fall', '')
+                    competitionName = competitionName.replace('nogi', '')
                     competitionName = competitionName.encode('ascii', 'ignore')
                     competitionName = competitionName.replace(' ', '')
                     competitionName = competitionName.strip()
@@ -345,7 +347,8 @@ def getCompetitions(withPastCompetition=True):
                         if competitionID not in competitionIDs:
                             competitions.append(competition)
                             competitionIDs.append(competitionID)
-            except Exception,e: print e
+            except Exception,e: 
+                print "[ERROR] Exception in getting competitions (%s)"%(e)
     
     
     url_upcoming = 'http://ibjjf.org/upcoming-events/'
@@ -411,6 +414,7 @@ def getCompetitions(withPastCompetition=True):
                 competitionName = competitionName.replace('autumn', '')
                 competitionName = competitionName.replace('summer', '')
                 competitionName = competitionName.replace('fall', '')
+                competitionName = competitionName.replace('nogi', '')
                 competitionName = competitionName.replace('-', '')
                 competitionName = competitionName.replace(' ', '')
                 competitionName = competitionName.encode('ascii', 'ignore')
@@ -857,7 +861,8 @@ def insertOrUpdateResult(id, competitionID, academyID, competitorID, belt, categ
         my_db.execute(stm)
         my_db.commit()
     except sqlite3.IntegrityError, e:
-        print "[WARN] Why %s(%s) or %s(%s) not found in cache? "%(rowID, my_result.has_key(rowID), id, my_result.has_key(id))
+        #print "[WARN] Why %s(%s) or %s(%s) not found in cache? "%(rowID, my_result.has_key(rowID), id, my_result.has_key(id))
+        pass
 
     my_result[id] = rowID
     my_result[rowID] = position
@@ -932,7 +937,8 @@ def initialiseDB():
     
     for row in my_db.execute('SELECT * FROM competition order by year, date'):
         my_competition[row[0]] = False
-        if 1 == row[5]: my_competition[row[0]] = True
+        if 1 == row[8]: 
+            my_competition[row[0]] = True
         if 0 != row[6] and 0 != row[7]:
             my_competition_geolocation[row[0]] = (row[6], row[7])
 

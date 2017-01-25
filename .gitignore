@@ -8,3 +8,4 @@ my_ibjjf_data_analyzer.cfg
 report_team_GFF.html
 report_team_GFF.md
 *.pyc
+my-ibjjf.db

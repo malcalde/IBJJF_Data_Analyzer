@@ -11,8 +11,8 @@ from oauth2client.tools import argparser
 config = ConfigParser.RawConfigParser()
 config.read('my_ibjjf_data_analyzer.cfg')
 
-YOUTUBE_API_KEY = config.get('YOUTUBE','YOUTUBE_APP_KEY')
-YOUTUBE_KEYWORDS = config.get('YOUTUBE','YOUTUBE_KEYWORD').split('#')
+YOUTUBE_API_KEY = config.get('GOOGLE','YOUTUBE_APP_KEY')
+YOUTUBE_KEYWORDS = config.get('GOOGLE','YOUTUBE_KEYWORD').split('#')
 YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
 

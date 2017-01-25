@@ -10,11 +10,11 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-url = 'http://ibjjf.org/results'
+url_results = 'http://ibjjf.org/results'
 parser = 'html5lib'
 
 s = requests.session()
-r = s.get(url)
+r = s.get(url_results)
  
 soup = BeautifulSoup(r.text, parser)
 
@@ -27,6 +27,8 @@ competitionYear = None
 competitionMode = None
 competitionTitle = None
 competitionName  = None
+
+events = []
 
 for item in data:
     try:
@@ -73,8 +75,81 @@ for item in data:
                 
                 competitionYear = item.contents[0]
                 
-                print "%s-%s-%s-%s"%(competitionID, competitionName, competitionMode, competitionYear)
+                events.append("%s-%s-%s-%s"%(competitionID, competitionName, competitionMode, competitionYear))
     except: pass
+
+
+url_upcoming = 'http://ibjjf.org/upcoming-events/'
+r = s.get(url_upcoming) 
+soup = BeautifulSoup(r.text, parser)
+
+data_links = soup.find_all(['li'])
+
+for link in data_links:
+    competitionID = None
+    competitionName = None
+    competitionMode = None
+    competitionTitle = None
+    competitionLocation = None
     
-print "\n# Upcoming events"
-print "000652-european-gi-2017"
+    data_a = link.find_all(['a'])
+    for a in data_a:
+        if False == a.has_attr('href'): continue
+        
+        href = str(a['href'])
+        if a.has_attr('class') and 'register_now_link'in a['class']:
+            competitionID = href
+            competitionID = competitionID.replace('http://www.ibjjfdb.com/Championships/Championship/Details/','')
+            competitionID = competitionID.replace('https://www.ibjjfdb.com/Championships/Championship/Details/','')
+            competitionID = competitionID[0: competitionID.find('/')]
+            competitionID = "%06d"%(int(competitionID))
+            
+        elif href.startswith('http://ibjjf.org/championship/'):
+            competitionTitle = href.replace('http://ibjjf.org/championship/','')
+            competitionTitle = competitionTitle.replace('/','')
+            
+            if -1 != competitionTitle.find('no-gi'):
+                competitionMode='nogi'
+            else:
+                competitionMode = 'gi'
+            
+            competitionName = competitionTitle    
+            competitionName = competitionName.replace(' no-gi ', '')
+            competitionName = competitionName.replace(' gi ', '')
+            competitionName = competitionName.replace('championship', '')
+            competitionName = competitionName.replace('ibjjf', '')
+            competitionName = competitionName.replace('jiu-jitsu', '')
+            competitionName = competitionName.replace('master', '')
+            competitionName = competitionName.replace('international', '')
+            competitionName = competitionName.replace('open', '')
+            competitionName = competitionName.replace('kids', '')
+            competitionName = competitionName.replace('national', '')
+            competitionName = competitionName.replace('winter', '')
+            competitionName = competitionName.replace('spring', '')
+            competitionName = competitionName.replace('autumn', '')
+            competitionName = competitionName.replace('summer', '')
+            competitionName = competitionName.replace('fall', '')
+            competitionName = competitionName.replace('-', '')
+            competitionName = competitionName.replace(' ', '')
+            competitionName = competitionName.strip()
+                
+            data_address = link.find('big')
+            if data_address is not None:
+                data_address = data_address.find('address')
+                competitionLocation = data_address.string
+                competitionLocation =  competitionLocation.replace('\n','')
+                competitionYear = competitionLocation[0: competitionLocation.find('-')]
+                competitionYear = competitionYear[competitionYear.find(',')+1:]
+                competitionYear = competitionYear.replace(' ', '')
+                
+            
+    if competitionID is not None:
+        print "CompetitionID: %s"%(competitionID)
+        print "CompetitionName: %s"%(competitionName)
+        print "CompetitionMode: %s"%(competitionMode)
+        print "CompetitionTitle: %s"%(competitionTitle)
+        print "CompetitionLocation: %s"%(competitionLocation)
+        print "CompetitionYear: %s"%(competitionYear)
+        events.append("%s-%s-%s-%s-%s"%(competitionID, competitionName, competitionMode, competitionYear, href))
+        
+

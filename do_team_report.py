@@ -120,12 +120,12 @@ my_db = sqlite3.connect('data/my-ibjjf.db')
 assert (my_db is not None),"Fail opening database"
 
 my_db.execute(stm0)
-my_db.commit()
 
 if(len(sys.argv) > 2):
     for competitionID in sys.argv[2:]:
-        my_db.execute(stm1%(competitionID))
-    my_db.commit()
+        my_db.execute(stm1%(competitionID)) 
+             
+my_db.commit()
 
 srcs = open("my-fake_results.txt", "r")
 for row in srcs:
@@ -272,7 +272,7 @@ for row in my_db.execute(stmA%(MY_TEAM)):
         print 100*'='
         print stmC%(filterOponents)
         print 100*'='
-     
+        
     for row_t in my_db.execute(stmC%(filterOponents)):
         if row_t[3] > 1:
             oponents[row_t[9]] = row_t[0].title()

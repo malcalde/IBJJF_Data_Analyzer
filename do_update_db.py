@@ -10,6 +10,8 @@ import sys
 import re
 import csv
 import os
+import threading
+import thread
 import traceback
 import math
 import html2text
@@ -21,9 +23,11 @@ import requests
 import argparse
 import googlemaps
 import ConfigParser
+import Queue
 
 from bs4 import BeautifulSoup
 from datetime import date
+from do_get_competitions import competitionName
 
 SHOW_SQL_STATEMENTS = False
 
@@ -131,11 +135,43 @@ ENGLISH_MONTHS = {
     'december': '12'
 }
 
+FORWARD_MONTH = {
+    '01': '02',  
+    '02': '03',
+    '03': '04',
+    '04': '05',
+    '05': '06',
+    '06': '07',
+    '07': '08',
+    '08': '09',
+    '09': '10',
+    '10': '11',
+    '11': '11',
+    '12': '00'
+}
+
+BACKWARD_MONTH = {
+    '01': '12',  
+    '02': '01',
+    '03': '02',
+    '04': '03',
+    '05': '04',
+    '06': '05',
+    '07': '06',
+    '08': '07',
+    '09': '08',
+    '10': '09',
+    '11': '10',
+    '12': '11'
+}
+
 my_db = None  
 my_md5 = None
 
 my_db_inserted = 0
 my_db_updated = 0
+
+my_db_cheating = 0
 
 my_competition = None
 my_competitor = None
@@ -145,6 +181,8 @@ my_result = None
 my_team = None
 
 my_map_api_key = None
+
+my_queue = None
 
 def whoAmI():
     stack = traceback.extract_stack()
@@ -175,13 +213,14 @@ def getCompetitionLocation(url):
         my_address = my_address.replace('<br/>', '')
         my_address = my_address.replace('\n', ' ')
         my_address = my_address.replace('\t', ' ')
+        my_address = my_address.replace('  ', ' ')
         my_address = my_address.strip()
     
     if "" != my_address:
         gmaps = googlemaps.Client(key=my_map_api_key)
         for geomap in gmaps.geocode(my_address):
         	geocode = (geomap['geometry']['location']['lat'], geomap['geometry']['location']['lng'])
-		print "[INFO] Geocode for '%s': %s"%(my_address, geocode)
+		#print "[INFO] Geocode for '%s': %s"%(my_address, geocode)
 		break
     
     return geocode
@@ -205,6 +244,29 @@ def getCompetitorAge(competitorID, competitorGender, competitorCategory, competi
 
     return my_helperCompetitorAge[competitorID]['age']
 
+def updateCompetitorScoreForCompetition(competitionID, competitionName=""):
+    
+    print "[INFO] Updating competitor scores for competition %s %s"%(competitionID, competitionName)
+    rounds = {}
+    
+    stm = "select competitionID, belt, category, gender,weight, count(1) from result  where competitionID = '%s' group by competitionID, belt, category, gender,weight"
+    for row in my_db.execute(stm%(competitionID)):
+        rounds["%s-%s-%s-%s-%s"%(row[0], row[1], row[2].replace(' ', '_'), row[3], row[4].replace('-','_'))] = str(row[5])
+    
+    stm = "select count(1) from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s'"
+    for row in my_db.execute(stm%(competitionID)):
+        printProgress(row[0], 'U')
+    
+    stm = "select R.id, R.competitionID, R.belt, R.category, R.gender, R.weight, R. medal, C.name, C.location, C.year from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s'"
+    for row in my_db.execute(stm%(competitionID)):
+        printProgress()
+        my_key = "%s-%s-%s-%s-%s"%(row[1], row[2], row[3].replace(' ', '_'), row[4], row[5].replace('-','_'))
+        if rounds.has_key(my_key):
+            score  = getCompetitorScore(row[7], row[8], row[9], row[5].replace('-','_'), row[6], rounds[my_key])
+            my_db.execute("UPDATE result set score=%s and id='%s'"%(score, row[0]))
+            
+    my_db.commit()
+
 def getCompetitorScore(competitionName, competitionLocation, competitionYear, weight, medal, rounds=1000):
     score = 0.0
     
@@ -221,12 +283,22 @@ def getCompetitorScore(competitionName, competitionLocation, competitionYear, we
     elif "international" in competitionName.lower():
         my_score_location = 1.0
     
+    medal = str(medal)
     my_score_medal = 0
     if SCORE_MEDAL.has_key(medal): 
         my_score_medal = SCORE_MEDAL[medal]
-        if "1" == medal and 0 == rounds: my_score_medal = 0
-        if "2" == medal and 1 == rounds: my_score_medal = 0
-        if "3" == medal and 2 == rounds: my_score_medal = 0
+        if "1" == medal and 0 == rounds:
+            my_score_medal = 0
+            print "[INFO] Cheating detection in GOLD medal (%s,%s,%s,%s,%s)"%(competitionName, competitionLocation, competitionYear, weight, medal) 
+            my_db_cheating = my_db_cheating + 1
+        if "2" == medal and 1 == rounds: 
+            my_score_medal = 0
+            print "[INFO] Cheating detection in GOLD medal (%s,%s,%s,%s,%s)"%(competitionName, competitionLocation, competitionYear, weight, medal) 
+            my_db_cheating = my_db_cheating + 1
+        if "3" == medal and 2 == rounds: 
+            my_score_medal = 0
+            print "[INFO] Cheating detection in GOLD medal (%s,%s,%s,%s,%s)"%(competitionName, competitionLocation, competitionYear, weight, medal) 
+            my_db_cheating = my_db_cheating + 1
     
     if "open" in weight.lower():
         if SCORE_MEDAL_OPENCLASS.has_key(medal): 
@@ -273,7 +345,7 @@ def processData(data, suffix=None):
     
     return hkey
     
-def getCompetitions(withPastCompetition=True):
+def getCompetitions(withPastCompetition=True, hardcodedCompetitions=[]):
     competitions = []
     competitionIDs = []
     
@@ -286,7 +358,8 @@ def getCompetitions(withPastCompetition=True):
     soup = BeautifulSoup(r.text, parser)
     data = soup.find_all(['h3','a'])
 
-    valid_link = re.compile('http:\/\/static.ibjjfdb\.com\/Campeonato\/[0-9]\/*')
+    valid_link0 = re.compile('http:\/\/static.ibjjfdb\.com\/Campeonato\/[0-9]\/*')
+    valid_link1 = re.compile('http(s)?:\/\/www.ibjjfdb.com\/ChampionshipResults\/[0-9]*\/PublicResults')
 
     competitionID = None
     competitionYear = None
@@ -338,117 +411,143 @@ def getCompetitions(withPastCompetition=True):
                     href = item.get ('href')
                     if href is None: continue
                     
-                    if (valid_link.match(href)):
+                    if (valid_link0.match(href)) or(valid_link1.match(href)) :
                         competitionID = href.replace('http://static.ibjjfdb.com/Campeonato/','')
+                        competitionID = competitionID.replace('https://www.ibjjfdb.com/ChampionshipResults/','')
                         competitionID = competitionID.replace('/en-US/Results.pdf','')
+                        competitionID = competitionID.replace('/PublicResults','')
                         competitionYear = item.contents[0]
-                        competition = "%s-%s-%s-%s"%(competitionID, competitionName, competitionMode, competitionYear)
+                        competition = "%06d-%s-%s-%s"%(int(competitionID), competitionName, competitionMode, competitionYear)
                         print '\n\t* %s'%(competition)
                         if competitionID not in competitionIDs:
                             competitions.append(competition)
                             competitionIDs.append(competitionID)
             except Exception,e: 
-                print "[ERROR] Exception in getting competitions (%s)"%(e)
+                pass
+                #print "[ERROR] Exception in getting competitions (%s)"%(e)
     
+    urls_upcoming = ['http://ibjjf.org/upcoming-events/']
     
-    url_upcoming = 'http://ibjjf.org/upcoming-events/'
-    r = None
-    try:
-        r = s.get(url_upcoming) 
-    except ConnectionError,e: 
-        print"[ERROR] Connection error to page %s"%(url_upcoming)
-        return competitions
-    
-    soup = BeautifulSoup(r.text, parser)
-    
-    data_links = soup.find_all(['li'])
-    
-    print '\n# getting upcoming events'
-    for link in data_links:
-        competitionID = None
-        competitionName = None
-        competitionMode = None
-        competitionTitle = None
-        competitionDay = None
-        competitionMonth = None
-        competitionURL = None
-        
-        data_a = link.find_all(['a'])
-        for a in data_a:
-            if False == a.has_attr('href'): continue
+    for url_upcoming in urls_upcoming:
+        r = None
+        try:
+            r = s.get(url_upcoming)
+            soup = BeautifulSoup(r.text, parser)
             
-            href = str(a['href'])
-            if a.has_attr('class') and 'register_now_link'in a['class']:
-                competitionID = href
-                competitionID = competitionID.replace('http://www.ibjjfdb.com/Championships/Championship/Details/','')
-                competitionID = competitionID.replace('https://www.ibjjfdb.com/Championships/Championship/Details/','')
-                competitionID = competitionID[0: competitionID.find('/')]
-                competitionID = "%06d"%(int(competitionID))
+            for other_link in soup.find_all('a',{ "class" : "page" }):
+                if False == other_link.has_attr('href'): continue
+                href = str(other_link['href'])
+                if href not in urls_upcoming:
+                    urls_upcoming.append(href)     
+        except ConnectionError,e: 
+            print"[ERROR] Connection error to page %s"%(url_upcoming)
+            return competitions
+        
+        data_links = soup.find_all(['li'])
+        
+        print '\n# getting upcoming events (%s)'%(url_upcoming)
+        for link in data_links:
+            competitionID = None
+            competitionName = None
+            competitionMode = None
+            competitionTitle = None
+            competitionDay = None
+            competitionMonth = None
+            competitionURL = None
+            
+            data_a = link.find_all(['a'])
+            for a in data_a:
+                if False == a.has_attr('href'): continue
                 
-            elif href.startswith('http://ibjjf.org/championship/'):
-                competitionURL = href
-                competitionTitle = href.replace('http://ibjjf.org/championship/','')
-                competitionTitle = competitionTitle.replace('/','')
-                
-                if -1 != competitionTitle.find('no-gi'):
-                    competitionMode='nogi'
-                else:
-                    competitionMode = 'gi'
-                
-                competitionName = competitionTitle 
-                competitionName = competitionName.lower()   
-                competitionName = competitionName.replace(' no-gi ', '')
-                competitionName = competitionName.replace(' gi ', '')
-                competitionName = competitionName.replace('championship', '')
-                competitionName = competitionName.replace('ibjjf', '')
-                competitionName = competitionName.replace(' bjj ', '')
-                competitionName = competitionName.replace(' pro ', '')
-                competitionName = competitionName.replace('jiu-jitsu', '')
-                competitionName = competitionName.replace('master', '')
-                competitionName = competitionName.replace('international', '')
-                competitionName = competitionName.replace('open', '')
-                competitionName = competitionName.replace('kids', '')
-                competitionName = competitionName.replace('national', '')
-                competitionName = competitionName.replace('winter', '')
-                competitionName = competitionName.replace('spring', '')
-                competitionName = competitionName.replace('autumn', '')
-                competitionName = competitionName.replace('summer', '')
-                competitionName = competitionName.replace('fall', '')
-                competitionName = competitionName.replace('nogi', '')
-                competitionName = competitionName.replace('-', '')
-                competitionName = competitionName.replace(' ', '')
-                competitionName = competitionName.encode('ascii', 'ignore')
-                competitionName = competitionName.strip()
+                href = str(a['href'])
+                if a.has_attr('class') and 'register_now_link'in a['class']:
+                    competitionID = href
+                    competitionID = competitionID.replace('http://www.ibjjfdb.com/Championships/Championship/Details/','')
+                    competitionID = competitionID.replace('https://www.ibjjfdb.com/Championships/Championship/Details/','')
+                    competitionID = competitionID[0: competitionID.find('/')]
+                    competitionID = "%06d"%(int(competitionID))
                     
-                data_address = link.find('big')
-                if data_address is not None:
-                    data_address = data_address.find('address')
-                    data_address = data_address.string
-                    data_address =  data_address.replace('\n','')
-                    competitionYear = data_address[0: data_address.find('-')]
-                    competitionMonth = competitionYear[0: competitionYear.find(' ')]
-                    competitionMonth = ENGLISH_MONTHS[competitionMonth.lower().strip()]
-                    competitionDay = competitionYear[competitionYear.find(' ')+1: competitionYear.find('th')]
-                    competitionDay =  competitionDay.split('th')
-                    competitionDay = competitionDay[0]
-                    competitionDay = competitionDay.strip()
-                    competitionYear = competitionYear[competitionYear.rfind(',')+1:]
-                    competitionYear = competitionYear.replace('*', '')
-                    competitionYear = competitionYear.replace(' ', '')
-                    competitionYear = competitionYear.strip()
+                elif href.startswith('http://ibjjf.org/championship/'):
+                    competitionURL = href
+                    competitionTitle = href.replace('http://ibjjf.org/championship/','')
+                    competitionTitle = competitionTitle.replace('/','')
                     
-                    competitionDay = "%02d%02d%04d"%(int(competitionDay),int(competitionMonth),int(competitionYear))
-                    markCompetitionAs(competitionID, False) 
+                    if -1 != competitionTitle.find('no-gi'):
+                        competitionMode='nogi'
+                    else:
+                        competitionMode = 'gi'
                     
+                    competitionName = competitionTitle 
+                    competitionName = competitionName.lower()  
+                    competitionName = competitionName.replace(' no-gi ', '')
+                    competitionName = competitionName.replace(' gi ', '')
+                    competitionName = competitionName.replace('championship', '')
+                    competitionName = competitionName.replace('ibjjf', '')
+                    competitionName = competitionName.replace(' bjj ', '')
+                    competitionName = competitionName.replace(' pro ', '')
+                    competitionName = competitionName.replace('jiu-jitsu', '')
+                    competitionName = competitionName.replace('master', '')
+                    competitionName = competitionName.replace('international', '')
+                    competitionName = competitionName.replace('open', '')
+                    competitionName = competitionName.replace('kids', '')
+                    competitionName = competitionName.replace('national', '')
+                    competitionName = competitionName.replace('winter', '')
+                    competitionName = competitionName.replace('spring', '')
+                    competitionName = competitionName.replace('autumn', '')
+                    competitionName = competitionName.replace('summer', '')
+                    competitionName = competitionName.replace('fall', '')
+                    competitionName = competitionName.replace('nogi', '')
+                    competitionName = competitionName.replace('-', '')
+                    competitionName = competitionName.replace(' ', '')
+                    competitionName = competitionName.encode('ascii', 'ignore')
+                    competitionName = competitionName.strip()
+                        
+                    data_address = link.find('big')
+                    if data_address is not None:
+                        data_address = data_address.find('address')
+                        data_address = data_address.string
+                        data_address =  data_address.replace('\n','')
+                        competitionYear = data_address[0: data_address.find('-')]
+                        competitionMonth = competitionYear[0: competitionYear.find(' ')]
+                        competitionMonth = ENGLISH_MONTHS[competitionMonth.lower().strip()]
+                        if -1 != competitionYear.find('th'):
+                            competitionDay = competitionYear[competitionYear.find(' ')+1: competitionYear.find('th')]
+                            competitionDay = competitionDay.split('th')
+                            competitionDay = competitionDay[0]
+                        elif -1 != competitionYear.find('st'):
+                            competitionDay = competitionYear[competitionYear.find(' ')+1: competitionYear.find('st')]
+                            competitionDay = competitionDay.split('st')
+                            competitionDay = competitionDay[0]
+                            #if "31" == competitionDay: competitionMonth = BACKWARD_MONTH[competitionMonth]
+                        elif -1 != competitionYear.find('nd'):
+                            competitionDay = competitionYear[competitionYear.find(' ')+1: competitionYear.find('nd')]
+                            competitionDay = competitionDay.split('nd')
+                            competitionDay = competitionDay[0]
+                        #else: print competitionDay
+                        competitionDay = competitionDay.strip()
+                        competitionYear = competitionYear[competitionYear.rfind(',')+1:]
+                        competitionYear = competitionYear.replace('*', '')
+                        competitionYear = competitionYear.replace(' ', '')
+                        competitionYear = competitionYear.strip()
+                        
+                        competitionDay = "%02d%02d%04d"%(int(competitionDay),int(competitionMonth),int(competitionYear))
+                        markCompetitionAs(competitionID, False) 
+                        
+                        
                     
-                
-        if competitionID is not None:
-            competition = "%s-%s-%s-%s-%s-%s"%(competitionID, competitionName, competitionMode, competitionYear,  competitionDay, competitionURL)
-            print '\n\t* %s'%(competition)
-            if competitionID not in competitionIDs:
-                            competitions.append(competition)
-                            competitionIDs.append(competitionID)
-           
+            if competitionID is not None:
+                competition = "%s-%s-%s-%s-%s-%s"%(competitionID, competitionName, competitionMode, competitionYear,  competitionDay, competitionURL)
+                print '\n\t* %s'%(competition)
+                if competitionID not in competitionIDs:
+                                competitions.append(competition)
+                                competitionIDs.append(competitionID)
+          
+    
+    for hardcoded_competition in hardcodedCompetitions:
+        if hardcoded_competition not in competitions: 
+            competitions.append(hardcoded_competition)
+            
+    #end method     
     return competitions
 
 def extractByAcademy(url):
@@ -694,7 +793,7 @@ def extractFromResults(url):
             data = line.strip().upper().split(' \- ')
 
             if (len(data)  != 3):
-                print "[WARN] Invalid athlete line %s"%(data) 
+                #print "[WARN] Invalid athlete line %s"%(data) 
                 continue
             
             competitorID = data[1]
@@ -718,8 +817,10 @@ def extractFromResults(url):
 
     if insertedResult > 0:
         ellapsed_time = timeit.default_timer() - start_time
-        print "[INFO] Processed %s lines of event '%s' in %.2f sg."%(len(lines),competitionName, ellapsed_time)    
-        markCompetitionAs(competitionID)             
+        print "[INFO] Processed %s lines of event '%s' in %.2f sg."%(len(lines),competitionName, ellapsed_time)
+        updateCompetitorScoreForCompetition(competitionID, competitionName)
+        if (4 == len(url_parts)):
+            markCompetitionAs(competitionID)             
     del lines[:]
 
 
@@ -769,9 +870,8 @@ def insertOrUpdateCompetition(id, name, location, year, mode, day=None, url=None
         stm = "UPDATE competition SET name='%s', location='%s', year=%s, mode='%s', date=max(date,%s), lat=max(lat,%s), lng=max(lng,%s), is_loaded=0 WHERE id = '%s'"%(name, location, year, mode, day, geo_lat, geo_lng, id)
     else: return
 
-    if SHOW_SQL_STATEMENTS or True: print stm
+    if SHOW_SQL_STATEMENTS: print stm
 
-    print stm
     my_db.execute(stm)
     my_db.commit()
 
@@ -788,8 +888,12 @@ def markCompetitionAs(id, loaded= True):
 
     my_db.execute(stm)
     my_db.commit()
-
-    if my_competition.has_key(id): my_competition[id] = loaded
+    
+    
+    if my_competition.has_key(id): 
+        my_competition[id] = loaded
+        if loaded:
+            print "[INFO] Mark %s competition as DONE"%(id)
 
 def insertOrUpdateCompetitor(name, competitorYear=0, academyID=0):
     global my_academy, my_competition, my_competitor, my_result
@@ -954,37 +1058,70 @@ def initialiseDB():
 
         #competitorAge = getCompetitorAge(row[3],row[6], row[5],row[10])
         #insertOrUpdateCompetitor(row[3], competitorAge)
+
+
+def do_threading_action():
+    global my_queue
+     
+    while True:
+        item = my_queue.get()
+        if item[0] == "action_results":
+            extractFromResults(item[1])
+        elif item[0] == "action_scores":
+            updateCompetitorScoreForCompetition(item[1], item[2])
+        elif item[0] == "action_competitor":
+            updateCompetitorScoreForCompetition(item[1], item[2])
+        my_queue.task_done()
     
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Process some integers.')
-    parser.add_argument('--closed-events', help='if True also update bd with past events', type=bool)
+    parser.add_argument('--closed-events', help='if True also update bd with past events', nargs='?', type=bool, default=False)
+    parser.add_argument('--competition', help='competition ID', action='append')
 
     args = parser.parse_args()
     
     start_time = timeit.default_timer()
-
+ 
     my_competition = {}
     my_competition_geolocation = {}  
     my_competitor = {}
     my_academy = {}
     my_result = {}
     my_team = {}
-    my_helperCompetitorAge = {}
+    my_helperCompetitorAge = {} 
+    
+    my_queue = Queue.Queue()
 
     my_db = sqlite3.connect('data/my-ibjjf.db')
     my_md5 = hashlib.md5()
 
     initialiseDB()
     
+    withClosedEvents= False
+    if False != args.closed_events:
+        withPastCompetition = True
+     
+     
+    hardcoded_competitions = []
+    if (args.competition):
+        for competitionID in args.competition:
+           for row in my_db.execute("select * from competition where id='%s'"%(competitionID)):
+               competition = "%s-%s-%s-%s"%(row[0], row[2], row[5], row[3])
+               hardcoded_competitions.append(competition)
+    
     config = ConfigParser.RawConfigParser()
     config.read('my_ibjjf_data_analyzer.cfg')
     my_map_api_key = config.get('GOOGLE','MAPS_APP_KEY')
+    
    	
-    for competition in getCompetitions(True):
+    for competition in getCompetitions(withClosedEvents, hardcoded_competitions):
         extractFromResults(competition)
     
-    fixUnknownAcademy()   
+    for row in my_db.execute('select distinct id, name from competition order by id'):
+        updateCompetitorScoreForCompetition(row[0], row[1])
+    
+    fixUnknownAcademy()  
     
     if 0 < (my_db_inserted + my_db_updated) or False:
         for row in my_db.execute('select competitorID, sum(score) from result group by competitorID'):
@@ -996,4 +1133,4 @@ if __name__ == '__main__':
     
 
     ellapsed_time = timeit.default_timer() - start_time
-    print "[INFO] Source data (inserted: %d, updated: %d)processed in %.2f sg."%(my_db_inserted, my_db_updated, ellapsed_time)  
+    print "[INFO] Source data (inserted: %d, updated: %d, cheating: %d)processed in %.2f sg."%(my_db_inserted, my_db_updated, ellapsed_time)  

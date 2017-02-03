@@ -17,27 +17,43 @@ import urllib2
 import sqlite3
 import hashlib
 import timeit
+import argparse
+import googlemaps
+import ConfigParser
 
-from search_youtube import *
+from do_youtube_search import *
 
 from datetime import date
 
 #from update_competitions import competitionYear
 
-assert(len(sys.argv) > 1)
-MY_TEAM = sys.argv[1]
-
 DEBUG_SQL = False
 DEBUG_COMPETITORID = 'NOBODY'
 
-stm0 = "CREATE TABLE IF NOT EXISTS lk_belt as select distinct 0 id,  belt from result"
+stm0 = """
+    CREATE TABLE IF NOT EXISTS lk_belt as 
+    select 1 id ,    'WHITE' name union
+    select 2,        'GREY, WHITE, YELLOW' union
+    select 2,        'GREY, ORANGE, WHITE, YELLOW' union
+    select 2,        'GREY' union
+    select 2,        'YELLOW' union
+    select 3,        'ORANGE' union
+    select 4,        'GREEN' union
+    select 2,        'GREEN, GREY, ORANGE, WHITE, YELLOW' union
+    select 5,        'BLUE' union
+    select 6,        'PURPLE' union
+    select 7,        'BROWN' union
+    select 8,        'BLACK' union
+    select 0,        'UNKNOWN' 
+"""
+
 stm1 = "update competition set is_loaded=0 where id='%s'"
 
 stmA = """ 
   select  distinct C.id competitionID, C.name competitionName, O.id competitorID, O.name competidor_name, R.rawID, R.belt, T.name
   from result R, competition C, academy T, competitor O, lk_belt L
   where 1=1
-     and L.belt = R.belt
+     and L.name = R.belt
      and R.academyID = T.id
      and O.id = R.competitorID
      and R.competitionID=C.id
@@ -116,13 +132,31 @@ stmI = """
 
 stmJ = "select  belt,category,weight from result where competitionID = '%s' and competitorID = '%s'"
 
+start_time = timeit.default_timer()
+
 my_db = sqlite3.connect('data/my-ibjjf.db')
 assert (my_db is not None),"Fail opening database"
 
 my_db.execute(stm0)
 
-if(len(sys.argv) > 2):
-    for competitionID in sys.argv[2:]:
+MY_TEAM = None
+
+config = ConfigParser.RawConfigParser()
+config.read('my_ibjjf_data_analyzer.cfg')
+if config.has_option('GENERAL', 'MY_TEAM'):
+    MY_TEAM = config.get('GENERAL', 'MY_TEAM')
+
+parser = argparse.ArgumentParser(description='Process some values.')
+parser.add_argument('--team', help='team ID')
+parser.add_argument('--competition', help='competition ID', action='append')
+
+args = parser.parse_args()
+
+if (args.team):
+    MY_TEAM = args.team
+ 
+if (args.competition):
+    for competitionID in args.competition:
         my_db.execute(stm1%(competitionID)) 
              
 my_db.commit()
@@ -209,10 +243,10 @@ for row_h in my_db.execute(stmH%(MY_TEAM)):
     MY_TEAM_NAME = row_h[0]
     
 if MY_TEAM_NAME is None:
-    print "# Not foudn record for academy: '%s'.\n' "%(MY_TEAM)
+    print "# Not found record for academy: '%s'.\n' "%(MY_TEAM)
     sys.exit(1)
 
-print "# Informe competiciones - Team: '%s'.\n' "%(MY_TEAM_NAME)
+print "# Informe competiciones - Team: '%s'.\n "%(MY_TEAM_NAME)
 
 if DEBUG_SQL or competitorID == DEBUG_COMPETITORID:
     print 100*'='
@@ -319,6 +353,9 @@ for row in my_db.execute(stmA%(MY_TEAM)):
             medal = medal.replace("BRONZE","- Medalla de BRONCE")
             print "\t* [%s] '%s' %s - (%s/%s/%s)."%(row_opd[1], row_opd[0], medal, row_opd[7].lower(), row_opd[8].lower(), row_opd[9].lower())
             
-sys.exit(0)            
+           
 my_db.execute("delete from result where id like 'FAKE%%'")
 my_db.commit()
+
+ellapsed_time = timeit.default_timer() - start_time
+print "Procesado - informe de competiciones - Team: '%s' _(%.2f sg)_.\n "%(MY_TEAM_NAME, ellapsed_time)

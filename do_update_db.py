@@ -27,7 +27,6 @@ import Queue
 
 from bs4 import BeautifulSoup
 from datetime import date
-from do_get_competitions import competitionName
 
 SHOW_SQL_STATEMENTS = False
 
@@ -220,7 +219,6 @@ def getCompetitionLocation(url):
         gmaps = googlemaps.Client(key=my_map_api_key)
         for geomap in gmaps.geocode(my_address):
         	geocode = (geomap['geometry']['location']['lat'], geomap['geometry']['location']['lng'])
-		#print "[INFO] Geocode for '%s': %s"%(my_address, geocode)
 		break
     
     return geocode
@@ -248,28 +246,39 @@ def updateCompetitorScoreForCompetition(competitionID, competitionName=""):
     
     print "[INFO] Updating competitor scores for competition %s %s"%(competitionID, competitionName)
     rounds = {}
-    
+   
+    filter = " 1 = 0 "	 
     stm = "select competitionID, belt, category, gender,weight, count(1) from result  where competitionID = '%s' group by competitionID, belt, category, gender,weight"
     for row in my_db.execute(stm%(competitionID)):
-        rounds["%s-%s-%s-%s-%s"%(row[0], row[1], row[2].replace(' ', '_'), row[3], row[4].replace('-','_'))] = str(row[5])
+        if int(row[5]) < 4:
+            my_key = "%s-%s-%s-%s-%s"%(row[0], row[1], row[2].replace(' ', '_'), row[3], row[4].replace('-','_'))
+            rounds[my_key] = int(row[5])
+            filter = filter + " OR rawID like '%s%s'"%(my_key,'%')
     
-    stm = "select count(1) from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s'"
-    for row in my_db.execute(stm%(competitionID)):
+    filter = "(%s)"%(filter)
+    stm = "select count(1) from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s' and %s"
+    for row in my_db.execute(stm%(competitionID, filter)):
         printProgress(row[0], 'U')
     
-    stm = "select R.id, R.competitionID, R.belt, R.category, R.gender, R.weight, R. medal, C.name, C.location, C.year from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s'"
-    for row in my_db.execute(stm%(competitionID)):
+    stm = "select R.id, R.competitionID, R.belt, R.category, R.gender, R.weight, R. medal, C.name, C.location, C.year from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s'  and %s"
+    for row in my_db.execute(stm%(competitionID, filter)):
         printProgress()
         my_key = "%s-%s-%s-%s-%s"%(row[1], row[2], row[3].replace(' ', '_'), row[4], row[5].replace('-','_'))
         if rounds.has_key(my_key):
             score  = getCompetitorScore(row[7], row[8], row[9], row[5].replace('-','_'), row[6], rounds[my_key])
+            if 0 == score:
+                try:
+                    stm = "insert into cheating_result(id, competitionID, belt, category, gender, weight, medal) values('%s','%s','%s', '%s','%s','%s', %s)"
+                    my_db.execute(stm%(my_key,row[1], row[2], row[3], row[4], row[5],row[6]))
+                except: pass
             my_db.execute("UPDATE result set score=%s and id='%s'"%(score, row[0]))
             
     my_db.commit()
 
 def getCompetitorScore(competitionName, competitionLocation, competitionYear, weight, medal, rounds=1000):
+    global my_db_cheating
     score = 0.0
-    
+
     my_score_year = (date.today().year - int(competitionYear))
     if SCORE_YEAR.has_key(my_score_year): 
         my_score_year = SCORE_YEAR[my_score_year]
@@ -287,27 +296,15 @@ def getCompetitorScore(competitionName, competitionLocation, competitionYear, we
     my_score_medal = 0
     if SCORE_MEDAL.has_key(medal): 
         my_score_medal = SCORE_MEDAL[medal]
-        if "1" == medal and 0 == rounds:
+        if int(rounds) - int(medal) < 1:
             my_score_medal = 0
-            print "[INFO] Cheating detection in GOLD medal (%s,%s,%s,%s,%s)"%(competitionName, competitionLocation, competitionYear, weight, medal) 
             my_db_cheating = my_db_cheating + 1
-        if "2" == medal and 1 == rounds: 
-            my_score_medal = 0
-            print "[INFO] Cheating detection in GOLD medal (%s,%s,%s,%s,%s)"%(competitionName, competitionLocation, competitionYear, weight, medal) 
-            my_db_cheating = my_db_cheating + 1
-        if "3" == medal and 2 == rounds: 
-            my_score_medal = 0
-            print "[INFO] Cheating detection in GOLD medal (%s,%s,%s,%s,%s)"%(competitionName, competitionLocation, competitionYear, weight, medal) 
-            my_db_cheating = my_db_cheating + 1
-    
+            
     if "open" in weight.lower():
         if SCORE_MEDAL_OPENCLASS.has_key(medal): 
              my_score_medal += SCORE_MEDAL_OPENCLASS[medal]
              
     score = my_score_year * my_score_location * my_score_medal
-             
-    #if score > 0.0 and my_score_year > 1:
-    #    print "%s = f(%s,%s,%s,%s,%s) = (%s * %s * %s)"%(score, competitionName, competitionLocation, competitionYear, weight, medal, my_score_year, my_score_location, my_score_medal)
     
     return score
 
@@ -404,7 +401,6 @@ def getCompetitions(withPastCompetition=True, hardcodedCompetitions=[]):
                     competitionName = competitionName.strip()
                         
                     if competitionTitle != competitionName:
-                        print '\n# %s'%(item.contents[0])
                         competitionTitle = competitionName
                          
                 if 'a' == item.name:
@@ -1004,8 +1000,24 @@ def initialiseDB():
     my_db.execute(stm)
     stm = "CREATE TABLE IF NOT EXISTS lk_medal as select 0 id,'N/A' name union select 1,'GOLD' union select 2,'SILVER' union select 3,'BRONZE'"
     my_db.execute(stm)
-    stm = 'create index if not exists result_raw_idx on result (rawid)'
+    stm = 'create index if not exists idx_result_competitionID on result(competitionID)'
     my_db.execute(stm)
+    stm = 'create index if not exists idx_result_academyID on result(academyID)'
+    my_db.execute(stm)
+    stm = 'create index if not exists idx_result_competitorID on result(competitorID)' 
+    my_db.execute(stm)
+    stm = 'create index if not exists idx_result_belt on result(belt)'
+    my_db.execute(stm)
+    stm = 'create index if not exists idx_result_category on result(category)'
+    my_db.execute(stm)
+    stm = 'create index if not exists idx_result_weight on result(weight)'
+    my_db.execute(stm)
+    stm = 'create index if not exists idx_result_rawID on result (rawid)'
+    my_db.execute(stm)
+    stm = 'CREATE TABLE IF NOT EXISTS cheating_result(id text PRIMARY KEY ASC, competitionID text, belt text, category text, gender text, weight text, medal integer)'
+    my_db.execute(stm)
+    
+
     my_db.commit()
 
     stm = """CREATE VIEW IF NOT EXISTS v_result as 
@@ -1058,25 +1070,12 @@ def initialiseDB():
 
         #competitorAge = getCompetitorAge(row[3],row[6], row[5],row[10])
         #insertOrUpdateCompetitor(row[3], competitorAge)
-
-
-def do_threading_action():
-    global my_queue
-     
-    while True:
-        item = my_queue.get()
-        if item[0] == "action_results":
-            extractFromResults(item[1])
-        elif item[0] == "action_scores":
-            updateCompetitorScoreForCompetition(item[1], item[2])
-        elif item[0] == "action_competitor":
-            updateCompetitorScoreForCompetition(item[1], item[2])
-        my_queue.task_done()
     
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('--closed-events', help='if True also update bd with past events', nargs='?', type=bool, default=False)
+    parser.add_argument('--fix-score-for-cheaters', help='if True update score for detect cheater competitors', nargs='?', type=bool, default=False)
     parser.add_argument('--competition', help='competition ID', action='append')
 
     args = parser.parse_args()
@@ -1090,18 +1089,11 @@ if __name__ == '__main__':
     my_result = {}
     my_team = {}
     my_helperCompetitorAge = {} 
-    
-    my_queue = Queue.Queue()
 
     my_db = sqlite3.connect('data/my-ibjjf.db')
     my_md5 = hashlib.md5()
 
     initialiseDB()
-    
-    withClosedEvents= False
-    if False != args.closed_events:
-        withPastCompetition = True
-     
      
     hardcoded_competitions = []
     if (args.competition):
@@ -1115,11 +1107,12 @@ if __name__ == '__main__':
     my_map_api_key = config.get('GOOGLE','MAPS_APP_KEY')
     
    	
-    for competition in getCompetitions(withClosedEvents, hardcoded_competitions):
+    for competition in getCompetitions((False != args.closed_events), hardcoded_competitions):
         extractFromResults(competition)
     
-    for row in my_db.execute('select distinct id, name from competition order by id'):
-        updateCompetitorScoreForCompetition(row[0], row[1])
+    if False != args.fix_score_for_cheaters:	
+    	for row in my_db.execute('select distinct id, name from competition where id not in (select distinct competitionID from cheating_result) order by id'):
+        	updateCompetitorScoreForCompetition(row[0], row[1])
     
     fixUnknownAcademy()  
     
@@ -1133,4 +1126,4 @@ if __name__ == '__main__':
     
 
     ellapsed_time = timeit.default_timer() - start_time
-    print "[INFO] Source data (inserted: %d, updated: %d, cheating: %d)processed in %.2f sg."%(my_db_inserted, my_db_updated, ellapsed_time)  
+    print "[INFO] Source data (inserted: %d, updated: %d, cheating: %d)processed in %.2f sg."%(my_db_inserted, my_db_updated, my_db_cheating, ellapsed_time)  

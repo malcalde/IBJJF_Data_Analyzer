@@ -519,7 +519,11 @@ def getCompetitions(withPastCompetition=True, hardcodedCompetitions=[]):
                             competitionDay = competitionYear[competitionYear.find(' ')+1: competitionYear.find('nd')]
                             competitionDay = competitionDay.split('nd')
                             competitionDay = competitionDay[0]
-                        #else: print competitionDay
+                        elif -1 != competitionYear.find('rd'):
+                            competitionDay = competitionYear[competitionYear.find(' ')+1: competitionYear.find('rd')]
+                            competitionDay = competitionDay.split('rd')
+                            competitionDay = competitionDay[0]
+                        else: print "[WARM] uknown competition year: %s"%(competitionYear)
                         competitionDay = competitionDay.strip()
                         competitionYear = competitionYear[competitionYear.rfind(',')+1:]
                         competitionYear = competitionYear.replace('*', '')
@@ -1111,7 +1115,7 @@ if __name__ == '__main__':
         extractFromResults(competition)
     
     if False != args.fix_score_for_cheaters:	
-    	for row in my_db.execute('select distinct id, name from competition where id not in (select distinct competitionID from cheating_result) order by id'):
+    	for row in my_db.execute('select distinct id, name from competition where is_loaded != 0 and id not in (select distinct competitionID from cheating_result) order by id'):
         	updateCompetitorScoreForCompetition(row[0], row[1])
     
     fixUnknownAcademy()  

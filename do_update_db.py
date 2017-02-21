@@ -218,8 +218,8 @@ def getCompetitionLocation(url):
     if "" != my_address:
         gmaps = googlemaps.Client(key=my_map_api_key)
         for geomap in gmaps.geocode(my_address):
-        	geocode = (geomap['geometry']['location']['lat'], geomap['geometry']['location']['lng'])
-		break
+            geocode = (geomap['geometry']['location']['lat'], geomap['geometry']['location']['lng'])
+            break
     
     return geocode
 
@@ -242,39 +242,22 @@ def getCompetitorAge(competitorID, competitorGender, competitorCategory, competi
 
     return my_helperCompetitorAge[competitorID]['age']
 
-def updateCompetitorScoreForCompetition(competitionID, competitionName=""):
-    
-    print "[INFO] Updating competitor scores for competition %s %s"%(competitionID, competitionName)
-    rounds = {}
-   
-    filter = " 1 = 0 "	 
-    stm = "select competitionID, belt, category, gender,weight, count(1) from result  where competitionID = '%s' group by competitionID, belt, category, gender,weight"
+def updateCompetitionRoundAndScore(competitionID):
+    stm = "select replace(rawID, competitorID,'') myID, count (1) from result  where competitionID = '%s' group by myID"
     for row in my_db.execute(stm%(competitionID)):
-        if int(row[5]) < 4:
-            my_key = "%s-%s-%s-%s-%s"%(row[0], row[1], row[2].replace(' ', '_'), row[3], row[4].replace('-','_'))
-            rounds[my_key] = int(row[5])
-            filter = filter + " OR rawID like '%s%s'"%(my_key,'%')
-    
-    filter = "(%s)"%(filter)
-    stm = "select count(1) from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s' and %s"
-    for row in my_db.execute(stm%(competitionID, filter)):
-        printProgress(row[0], 'U')
-    
-    stm = "select R.id, R.competitionID, R.belt, R.category, R.gender, R.weight, R. medal, C.name, C.location, C.year from result R, competition C where R.medal != 0 and C.id = R.competitionID and R.competitionID = '%s'  and %s"
-    for row in my_db.execute(stm%(competitionID, filter)):
-        printProgress()
-        my_key = "%s-%s-%s-%s-%s"%(row[1], row[2], row[3].replace(' ', '_'), row[4], row[5].replace('-','_'))
-        if rounds.has_key(my_key):
-            score  = getCompetitorScore(row[7], row[8], row[9], row[5].replace('-','_'), row[6], rounds[my_key])
-            if 0 == score:
-                try:
-                    stm = "insert into cheating_result(id, competitionID, belt, category, gender, weight, medal) values('%s','%s','%s', '%s','%s','%s', %s)"
-                    my_db.execute(stm%(my_key,row[1], row[2], row[3], row[4], row[5],row[6]))
-                except: pass
-            my_db.execute("UPDATE result set score=%s and id='%s'"%(score, row[0]))
-            
+        try:
+            stm = "update result set round=%s where rawID like ('%s%s')"%(math.log(row[1],2), row[0], '%')
+            my_db.execute(stm)
+        except sqlite3.IntegrityError, e: pass
     my_db.commit()
-
+    
+    stm = "update result set score = 0 where weight != 'OPEN CLASS' and medal = %s and round < %s and competitionID = '%s'"
+    my_db.execute(stm%('1', '0.1', competitionID))
+    my_db.execute(stm%('2', '1.1', competitionID))
+    my_db.execute(stm%('3', '2.0', competitionID))
+    my_db.commit()
+                 
+                                
 def getCompetitorScore(competitionName, competitionLocation, competitionYear, weight, medal, rounds=1000):
     global my_db_cheating
     score = 0.0
@@ -305,6 +288,8 @@ def getCompetitorScore(competitionName, competitionLocation, competitionYear, we
              my_score_medal += SCORE_MEDAL_OPENCLASS[medal]
              
     score = my_score_year * my_score_location * my_score_medal
+    
+    #print "[score]{%s}  location: %s year=%s weight: %s medal: %s rounds: %s --> %s"%(competitionName, competitionLocation, my_score_year, weight, medal, rounds, score)
     
     return score
 
@@ -342,9 +327,13 @@ def processData(data, suffix=None):
     
     return hkey
     
-def getCompetitions(withPastCompetition=True, hardcodedCompetitions=[]):
+def getCompetitions(withPastCompetition=False, hardcodedCompetitions=[]):
     competitions = []
     competitionIDs = []
+    
+    if False == withPastCompetition:
+        for row in my_db.execute('select id from competition where is_loaded = 0'):
+            competitionIDs.append(row[0])
     
     url_results = 'http://ibjjf.org/results'
     parser = 'html5lib'
@@ -364,63 +353,62 @@ def getCompetitions(withPastCompetition=True, hardcodedCompetitions=[]):
     competitionTitle = None
     competitionName  = None
     
-    if withPastCompetition:
-        for item in data:
-            try:
-                if 'h3' == item.name:
-                    competitionName = item.contents[0]
-                    if competitionName is None: continue
+    for item in data:
+        try:
+            if 'h3' == item.name:
+                competitionName = item.contents[0]
+                if competitionName is None: continue
+                
+                competitionName = competitionName.lower()
+                
+                if -1 == competitionName.find('no-gi'):
+                    competitionMode = 'gi'
+                else:
+                    competitionMode = 'nogi'
                     
-                    competitionName = competitionName.lower()
+                competitionName = competitionName.replace(' no-gi', '')
+                competitionName = competitionName.replace(' gi ', '')
+                competitionName = competitionName.replace('championship', '')
+                competitionName = competitionName.replace('ibjjf', '')
+                competitionName = competitionName.replace(' bjj ', '')
+                competitionName = competitionName.replace(' pro ', '')
+                competitionName = competitionName.replace('jiu-jitsu', '')
+                competitionName = competitionName.replace('master', '')
+                competitionName = competitionName.replace('international', '')
+                competitionName = competitionName.replace('open', '')
+                competitionName = competitionName.replace('kids', '')
+                competitionName = competitionName.replace('national', '')
+                competitionName = competitionName.replace('winter', '')
+                competitionName = competitionName.replace('spring', '')
+                competitionName = competitionName.replace('autumn', '')
+                competitionName = competitionName.replace('summer', '')
+                competitionName = competitionName.replace('fall', '')
+                competitionName = competitionName.replace('nogi', '')
+                competitionName = competitionName.encode('ascii', 'ignore')
+                competitionName = competitionName.replace(' ', '')
+                competitionName = competitionName.strip()
                     
-                    if -1 == competitionName.find('no-gi'):
-                        competitionMode = 'gi'
-                    else:
-                        competitionMode = 'nogi'
-                        
-                    competitionName = competitionName.replace(' no-gi', '')
-                    competitionName = competitionName.replace(' gi ', '')
-                    competitionName = competitionName.replace('championship', '')
-                    competitionName = competitionName.replace('ibjjf', '')
-                    competitionName = competitionName.replace(' bjj ', '')
-                    competitionName = competitionName.replace(' pro ', '')
-                    competitionName = competitionName.replace('jiu-jitsu', '')
-                    competitionName = competitionName.replace('master', '')
-                    competitionName = competitionName.replace('international', '')
-                    competitionName = competitionName.replace('open', '')
-                    competitionName = competitionName.replace('kids', '')
-                    competitionName = competitionName.replace('national', '')
-                    competitionName = competitionName.replace('winter', '')
-                    competitionName = competitionName.replace('spring', '')
-                    competitionName = competitionName.replace('autumn', '')
-                    competitionName = competitionName.replace('summer', '')
-                    competitionName = competitionName.replace('fall', '')
-                    competitionName = competitionName.replace('nogi', '')
-                    competitionName = competitionName.encode('ascii', 'ignore')
-                    competitionName = competitionName.replace(' ', '')
-                    competitionName = competitionName.strip()
-                        
-                    if competitionTitle != competitionName:
-                        competitionTitle = competitionName
-                         
-                if 'a' == item.name:
-                    href = item.get ('href')
-                    if href is None: continue
-                    
-                    if (valid_link0.match(href)) or(valid_link1.match(href)) :
-                        competitionID = href.replace('http://static.ibjjfdb.com/Campeonato/','')
-                        competitionID = competitionID.replace('https://www.ibjjfdb.com/ChampionshipResults/','')
-                        competitionID = competitionID.replace('/en-US/Results.pdf','')
-                        competitionID = competitionID.replace('/PublicResults','')
-                        competitionYear = item.contents[0]
-                        competition = "%06d-%s-%s-%s"%(int(competitionID), competitionName, competitionMode, competitionYear)
-                        print '\n\t* %s'%(competition)
-                        if competitionID not in competitionIDs:
-                            competitions.append(competition)
-                            competitionIDs.append(competitionID)
-            except Exception,e: 
-                pass
-                #print "[ERROR] Exception in getting competitions (%s)"%(e)
+                if competitionTitle != competitionName:
+                    competitionTitle = competitionName
+                     
+            if 'a' == item.name:
+                href = item.get ('href')
+                if href is None: continue
+                
+                if (valid_link0.match(href)) or(valid_link1.match(href)) :
+                    competitionID = href.replace('http://static.ibjjfdb.com/Campeonato/','')
+                    competitionID = competitionID.replace('https://www.ibjjfdb.com/ChampionshipResults/','')
+                    competitionID = competitionID.replace('/en-US/Results.pdf','')
+                    competitionID = competitionID.replace('/PublicResults','')
+                    competitionYear = item.contents[0]
+                    competition = "%06d-%s-%s-%s"%(int(competitionID), competitionName, competitionMode, competitionYear)
+                    print '\n\t* %s'%(competition)
+                    if competitionID not in competitionIDs:
+                        competitions.append(competition)
+                        competitionIDs.append(competitionID)
+        except Exception,e: 
+            pass
+            #print "[ERROR] Exception in getting competitions (%s)"%(e)
     
     urls_upcoming = ['http://ibjjf.org/upcoming-events/']
     
@@ -818,7 +806,6 @@ def extractFromResults(url):
     if insertedResult > 0:
         ellapsed_time = timeit.default_timer() - start_time
         print "[INFO] Processed %s lines of event '%s' in %.2f sg."%(len(lines),competitionName, ellapsed_time)
-        updateCompetitorScoreForCompetition(competitionID, competitionName)
         if (4 == len(url_parts)):
             markCompetitionAs(competitionID)             
     del lines[:]
@@ -886,6 +873,9 @@ def markCompetitionAs(id, loaded= True):
     stm = "UPDATE competition SET is_loaded = %s WHERE id ='%s'"%(status, id)
     if SHOW_SQL_STATEMENTS: print stm
 
+    if True == loaded:
+        updateCompetitionRoundAndScore(id)
+        
     my_db.execute(stm)
     my_db.commit()
     
@@ -951,7 +941,7 @@ def insertOrUpdateResult(id, competitionID, academyID, competitorID, belt, categ
     
 
     if False == my_result.has_key(rowID):
-        stm = "INSERT INTO result VALUES ('%s','%s','%s','%s','%s','%s','%s','%s',%s,%s,'%s')"%(rowID, competitionID, academyID, competitorID, belt, category, gender, weight, position,score,id)
+        stm = "INSERT INTO result VALUES ('%s','%s','%s','%s','%s','%s','%s','%s',%s,%s,'%s',0)"%(rowID, competitionID, academyID, competitorID, belt, category, gender, weight, position,score,id)
         my_db_inserted += 1
     elif 0 != position: 
         stm = "UPDATE result SET medal=%s, score=%s WHERE id='%s'"%(position, score, rowID)
@@ -998,7 +988,7 @@ def initialiseDB():
     my_db.execute(stm)
     stm = 'CREATE TABLE IF NOT EXISTS competitor(id  text PRIMARY KEY ASC, name text, birth_year integer, score integer)'
     my_db.execute(stm)
-    stm = 'CREATE TABLE IF NOT EXISTS result(id text PRIMARY KEY ASC, competitionID text, academyID text, competitorID text, belt text, category text, gender text, weight text, medal integer, score numeric, rawID text)'
+    stm = 'CREATE TABLE IF NOT EXISTS result(id text PRIMARY KEY ASC, competitionID text, academyID text, competitorID text, belt text, category text, gender text, weight text, medal integer, score numeric, rawID text, round numeric)'
     my_db.execute(stm)
     stm = "CREATE TABLE IF NOT EXISTS team(id text, competitorID text, competitorName text)" 
     my_db.execute(stm)
@@ -1018,19 +1008,16 @@ def initialiseDB():
     my_db.execute(stm)
     stm = 'create index if not exists idx_result_rawID on result (rawid)'
     my_db.execute(stm)
-    stm = 'CREATE TABLE IF NOT EXISTS cheating_result(id text PRIMARY KEY ASC, competitionID text, belt text, category text, gender text, weight text, medal integer)'
-    my_db.execute(stm)
     
-
     my_db.commit()
 
     stm = """CREATE VIEW IF NOT EXISTS v_result as 
             select T.name competition, T.year year, T.mode mode, A.name academy, C.name competitor, C.birth_year estimated_birth_year,
-                   R.gender, R.belt, R.category, R.weight, m.name medal, R.score score
+                   R.gender, R.belt, R.category, R.weight, m.name medal, R.score score, R.round rounds
              from result R, competition T, academy A, competitor C, lk_medal M
             where R.medal=M.id
               and C.id = R.competitorID
-	          and A.id = R.academyID
+              and A.id = R.academyID
               and T.id=R.competitionID
     """
     my_db.execute(stm)
@@ -1044,12 +1031,6 @@ def initialiseDB():
     """
     #my_db.execute(stm)
     #my_db.commit()
-
-    for row in my_db.execute('select * from competition where is_loaded=0'):
-        stm = "delete from result where competitionID = '%s'"%(row[0])
-        r = my_db.execute(stm).rowcount
-        print "[INFO] Purged %d temporary results for competition %s"%(r,row[1]) 
-    my_db.commit()
 
     for row in my_db.execute('SELECT * FROM academy'):
         my_academy[row[1]] = row[0] 
@@ -1079,7 +1060,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('--closed-events', help='if True also update bd with past events', nargs='?', type=bool, default=False)
-    parser.add_argument('--fix-score-for-cheaters', help='if True update score for detect cheater competitors', nargs='?', type=bool, default=False)
+    parser.add_argument('--purge-temporary-results', help='if True also purge data for non closed events', nargs='?', type=bool, default=False)
     parser.add_argument('--competition', help='competition ID', action='append')
 
     args = parser.parse_args()
@@ -1110,17 +1091,19 @@ if __name__ == '__main__':
     config.read('my_ibjjf_data_analyzer.cfg')
     my_map_api_key = config.get('GOOGLE','MAPS_APP_KEY')
     
-   	
+    for row in my_db.execute('select * from competition where is_loaded=0'):
+        stm = "delete from result where competitionID = '%s'"%(row[0])
+        r = my_db.execute(stm).rowcount
+        print "[INFO] Purged %d temporary results for competition %s"%(r,row[1]) 
+    my_db.commit()
+
     for competition in getCompetitions((False != args.closed_events), hardcoded_competitions):
         extractFromResults(competition)
-    
-    if False != args.fix_score_for_cheaters:	
-    	for row in my_db.execute('select distinct id, name from competition where is_loaded != 0 and id not in (select distinct competitionID from cheating_result) order by id'):
-        	updateCompetitorScoreForCompetition(row[0], row[1])
-    
+        
+
     fixUnknownAcademy()  
     
-    if 0 < (my_db_inserted + my_db_updated) or False:
+    if 0 < (my_db_inserted + my_db_updated):
         for row in my_db.execute('select competitorID, sum(score) from result group by competitorID'):
             my_db.execute("update competitor set score=%s where id='%s'"%(row[1], row[0]))
              
